@@ -1,0 +1,7 @@
+data/input_data/
+data/output_data/
+weights/
+*.pt
+*.mp4
+__pycache__/
+.venv/
