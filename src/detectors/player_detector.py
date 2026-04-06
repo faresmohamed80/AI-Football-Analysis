@@ -10,8 +10,15 @@ class PlayerDetector:
         """
         يستقبل فريم ويرجع قائمة تحتوي على (track_id, bbox) لكل لاعب
         """
-        # استخدمنا track بدل predict (أو الاستدعاء المباشر) مع persist=True للحفاظ على الـ IDs
-        results = self.model.track(frame, persist=True, tracker="botsort.yaml", conf=CONFIDENCE_THRESHOLD, verbose=False)
+        # 🔴 التعديل هنا: ضفنا classes=[0] عشان نفلتر الأشخاص (Person) فقط
+        results = self.model.track(
+            frame, 
+            persist=True, 
+            tracker="botsort.yaml", 
+            conf=CONFIDENCE_THRESHOLD, 
+            classes=[0], # 0 هو الـ ID الخاص بالأشخاص في موديلات YOLO
+            verbose=False
+        )
         
         tracked_players = []
         for result in results:
