@@ -4,6 +4,8 @@ import os
 
 # استدعاء إعدادات المسارات
 from src.config import *
+import numpy as np
+from ultralytics import YOLO
 
 # استدعاء كل الموديلات والأنظمة
 from src.detectors.player_detector import PlayerDetector
@@ -13,16 +15,20 @@ from src.trackers.number_voter import NumberVotingSystem
 from src.trackers.ball_tracker import BallTracker
 from src.trackers.stat_tracker import MatchStats
 from src.visualizer import Visualizer
-
+from src.trackers.radar_tracker import PitchRadar
 # ---------------------------------------------------------
 # وظيفة لتحميل قاعدة بيانات أسماء اللاعبين
 # ---------------------------------------------------------
+from src.trackers.semantic_mapper import SemanticPitchMapper
+
 def load_player_database(file_path):
     if os.path.exists(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     print(f"⚠️ تحذير: ملف قاعدة البيانات غير موجود في {file_path}")
     return {}
+
+
 
 def main():
     print("⚙️ جاري تحميل النماذج والأنظمة (Models)... يرجى الانتظار.")
@@ -36,6 +42,9 @@ def main():
     ball_tracker = BallTracker("yolo26m.pt", max_missing_frames=7)
     voter = NumberVotingSystem(required_frames=30)
     stats_tracker = MatchStats() # نظام الاستحواذ
+    
+    # 🔴 تحميل موديل السجمنتيشن للملعب للرادار
+    pitch_segmenter = YOLO(os.path.join(BASE_DIR, "weights", "Studiam_seg.pt"))
     
     # 3. تحميل قاعدة بيانات اللاعبين
     db_path = os.path.join(BASE_DIR, "data", "players_database.json")
@@ -53,9 +62,20 @@ def main():
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(OUTPUT_VIDEO_PATH, fourcc, fps, (width, height))
+    frame_count = 0
+     # هنحتاج نقرأ أول فريم بس عشان نعرف أبعاد الفيديو
+    ret, first_frame = cap.read()
+    if not ret: return
+    h, w = first_frame.shape[:2]
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # نرجع الفيديو للأول تاني
+
+    # تهيئة كلاس الرادار الجديد
+    radar = PitchRadar(frame_w=w, frame_h=h)
+    
+    # 🔴 تهيئة الـ Semantic Mapper الجديد
+    semantic_mapper = SemanticPitchMapper(radar_w=radar.radar_w, radar_h=radar.radar_h)
 
     print("🚀 بدأ تحليل الفيديو الشامل (AI Referee & Stats System)...")
-    frame_count = 0
 
     # 5. الحلقة التكرارية لمعالجة الفيديو فريم بفريم
     while True:
@@ -66,6 +86,16 @@ def main():
         frame_count += 1
         if frame_count % 30 == 0:
             print(f"⏳ جاري معالجة الفريم رقم {frame_count}...")
+
+        # ---------------------------------------------------------
+        # تحديث إزاحة الكاميرا (Pan) عبر المعالم السيمانتيكية
+        # ---------------------------------------------------------
+        try:
+            seg_results = pitch_segmenter(frame, verbose=False)
+            dx, dy = semantic_mapper.get_camera_offset(seg_results, w, h, radar.matrix)
+            radar.update_matrix(dx, dy)
+        except Exception as e:
+            print(f"⚠️ خطأ في حساب إزاحة الكاميرا: {e}")
 
         # ---------------------------------------------------------
         # أ. معالجة اللاعبين (الأساس)
@@ -112,11 +142,16 @@ def main():
         # ---------------------------------------------------------
         # د. الرسم على الفريم (Visualization) 🎨
         # ---------------------------------------------------------
-        # رسم المربعات حول اللاعبين والكرة
+        # 1. رسم المربعات حول اللاعبين والكرة
         annotated_frame = Visualizer.draw_annotations(frame, players_data, ball_data)
         
-        # إضافة شريط الاستحواذ التلفزيوني أعلى الشاشة
+        # 2. رسم لوحة الإحصائيات الشفافة
         annotated_frame = stats_tracker.draw_stats(annotated_frame)
+
+        # 3. رسم الرادار المصغر في زاوية الشاشة
+        annotated_frame = radar.draw_radar(annotated_frame, players_data, ball_data)
+
+        # 4. عرض الفريم (بعد ما جمعنا عليه كل حاجة)
 
         # ---------------------------------------------------------
         # هـ. حفظ الفريم
@@ -126,7 +161,6 @@ def main():
     # 6. إغلاق وتحرير الملفات
     cap.release()
     out.release()
-    cv2.destroyAllWindows()
     
     # طباعة النتيجة النهائية للاستحواذ في الكونسول
     final_stats = stats_tracker.get_possession_stats()

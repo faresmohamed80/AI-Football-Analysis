@@ -105,23 +105,33 @@ class MatchStats:
 
     def draw_stats(self, frame):
         stats = self.get_possession_stats()
-        green_pct = stats["Blue Team"]
+        blue_pct = stats["Blue Team"]
         white_pct = stats["White Team"]
 
-        h, w = frame.shape[:2]
+        # إعدادات اللوحة (Panel) في الجانب الأيسر العلوي بطريقة عصرية
+        x, y = 20, 20
+        w, h = 330, 110 
         
-        cv2.rectangle(frame, (10, 10), (w - 10, 50), (50, 50, 50), -1) 
+        # رسم خلفية داكنة بشفافية خفيفة
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
         
-        green_width = int((w - 20) * (green_pct / 100))
-        if green_width > 0:
-            cv2.rectangle(frame, (10, 10), (10 + green_width, 50), (100, 255, 100), -1) 
+        # شريط جانبي ملون للزينة (لمسة Broadcast)
+        cv2.rectangle(frame, (x, y), (x + 6, y + h), (0, 215, 255), -1)
+
+        # النصوص
+        cv2.putText(frame, "L I V E  M A T C H  S T A T S", (x + 20, y + 25), cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"Possession: Blue {blue_pct}% | White {white_pct}%", (x + 20, y + 55), cv2.FONT_HERSHEY_DUPLEX, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
         
-        if w - 20 - green_width > 0:
-            cv2.rectangle(frame, (10 + green_width, 10), (w - 10, 50), (255, 255, 255), -1) 
+        # شريط الاستحواذ الديناميكي (أرفع وأكثر شياكة)
+        bar_y = y + 68
+        cv2.rectangle(frame, (x + 20, bar_y), (x + w - 20, bar_y + 6), (220, 220, 220), -1) 
         
-        cv2.putText(frame, f"Blue: {green_pct}%", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
-        cv2.putText(frame, f"White: {white_pct}%", (w - 180, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
-        
-        cv2.putText(frame, f"Current Possession: {self.current_possessor}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        blue_width = int((w - 40) * (blue_pct / 100))
+        if blue_width > 0:
+            cv2.rectangle(frame, (x + 20, bar_y), (x + 20 + blue_width, bar_y + 6), (255, 50, 50), -1) 
+            
+        cv2.putText(frame, f"Ball: {self.current_possessor}", (x + 20, y + 95), cv2.FONT_HERSHEY_DUPLEX, 0.45, (0, 215, 255), 1, cv2.LINE_AA)
 
         return frame

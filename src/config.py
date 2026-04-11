@@ -8,8 +8,8 @@ PLAYER_DETECTOR_WEIGHTS = os.path.join(BASE_DIR, "yolo26m.pt")
 NUMBER_RECOGNIZER_WEIGHTS = os.path.join(BASE_DIR, "weights", "jersey_recognition.pt")
 
 # مسارات الفيديوهات
-INPUT_VIDEO_PATH = os.path.join(BASE_DIR, "data", "input_data", "2.mp4")
-OUTPUT_VIDEO_PATH = os.path.join(BASE_DIR, "data", "output_data", "result7.mp4")
+INPUT_VIDEO_PATH = os.path.join(BASE_DIR, "data", "input_data", "7.mp4")
+OUTPUT_VIDEO_PATH = os.path.join(BASE_DIR, "data", "output_data", "result10.mp4")
 
 # إعدادات النماذج
 CONFIDENCE_THRESHOLD = 0.25 # نسبة الثقة لاعتماد إن فيه لاعب في المربع
