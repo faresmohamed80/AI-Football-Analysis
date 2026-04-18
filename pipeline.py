@@ -16,6 +16,8 @@ from src.trackers.ball_tracker import BallTracker
 from src.trackers.stat_tracker import MatchStats
 from src.visualizer import Visualizer
 from src.trackers.radar_tracker import PitchRadar
+from src.trackers.distance_speed import SpeedDistanceTracker
+from src.trackers.heatmap_tracker import HeatmapTracker
 # ---------------------------------------------------------
 # وظيفة لتحميل قاعدة بيانات أسماء اللاعبين
 # ---------------------------------------------------------
@@ -42,6 +44,11 @@ def main():
     ball_tracker = BallTracker("yolo26m.pt", max_missing_frames=7)
     voter = NumberVotingSystem(required_frames=30)
     stats_tracker = MatchStats() # نظام الاستحواذ
+    speed_tracker = SpeedDistanceTracker(fps=fps if fps > 0 else 25)
+    heatmap_tracker = HeatmapTracker(
+        pitch_image_path=os.path.join(BASE_DIR, "data", "pitch_topdown.png"),
+        output_dir=os.path.join(BASE_DIR, "data", "output_data", "heatmaps")
+    )
     
     # 🔴 تحميل موديل السجمنتيشن للملعب للرادار
     pitch_segmenter = YOLO(os.path.join(BASE_DIR, "weights", "Studiam_seg.pt"))
@@ -59,9 +66,10 @@ def main():
     # إعدادات فيديو الإخراج
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    fps = int(cap.get(cv2.CAP_PROP_FPS)) or 25
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(OUTPUT_VIDEO_PATH, fourcc, fps, (width, height))
+    speed_tracker.fps = fps
     frame_count = 0
      # هنحتاج نقرأ أول فريم بس عشان نعرف أبعاد الفيديو
     ret, first_frame = cap.read()
@@ -123,7 +131,8 @@ def main():
                 player_display_name = player_db.get(str(number), f"Player #{number}")
 
             players_data.append({
-                'bbox': bbox, 
+                'bbox': bbox,
+                'track_id': track_id,
                 'name': player_display_name,
                 'team': team_name,
                 'color': box_color
@@ -135,20 +144,40 @@ def main():
         ball_data = ball_tracker.track(frame)
 
         # ---------------------------------------------------------
-        # ج. حساب الإحصائيات (الاستحواذ) 📊
+        # ج. حساب الإحصائيات (الاستحواذ + السرعة + الهيت ماب) 📊
         # ---------------------------------------------------------
         stats_tracker.update(players_data, ball_data)
+
+        # تحديث تتبع السرعة والمسافة
+        tracks_for_speed = {}
+        heatmap_positions = {}
+        for p in players_data:
+            tid = p.get('track_id')
+            if tid is None: continue
+            bx1, by1, bx2, by2 = p['bbox']
+            feet_x = (bx1 + bx2) / 2
+            feet_y = by2
+            tracks_for_speed[tid] = (feet_x, feet_y)
+            # إحداثيات مُطبَّعة (0-1) للـ heatmap
+            label = p.get('name') or f"#{tid}"
+            heatmap_positions[label] = (feet_x / width, feet_y / height)
+
+        total_dist, speeds = speed_tracker.update(tracks_for_speed)
+        heatmap_tracker.update(heatmap_positions)
 
         # ---------------------------------------------------------
         # د. الرسم على الفريم (Visualization) 🎨
         # ---------------------------------------------------------
-        # 1. رسم المربعات حول اللاعبين والكرة
+        # 1. رسم المؤثرات حول اللاعبين والكرة
         annotated_frame = Visualizer.draw_annotations(frame, players_data, ball_data)
+
+        # 2. رسم السرعة / المسافة فوق كل لاعب
+        annotated_frame = Visualizer.draw_speed_distance(annotated_frame, players_data, speeds, total_dist)
         
-        # 2. رسم لوحة الإحصائيات الشفافة
+        # 3. رسم لوحة الإحصائيات الشفافة
         annotated_frame = stats_tracker.draw_stats(annotated_frame)
 
-        # 3. رسم الرادار المصغر في زاوية الشاشة
+        # 4. رسم الرادار المصغر في زاوية الشاشة
         annotated_frame = radar.draw_radar(annotated_frame, players_data, ball_data)
 
         # 4. عرض الفريم (بعد ما جمعنا عليه كل حاجة)
@@ -161,6 +190,9 @@ def main():
     # 6. إغلاق وتحرير الملفات
     cap.release()
     out.release()
+
+    # 7. توليد صور الـ Heatmap لكل لاعب
+    heatmap_tracker.generate_heatmaps(min_frames=30)
     
     # طباعة النتيجة النهائية للاستحواذ في الكونسول
     final_stats = stats_tracker.get_possession_stats()

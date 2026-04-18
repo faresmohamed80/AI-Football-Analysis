@@ -47,6 +47,55 @@ class Visualizer:
         cv2.putText(frame, display_text, (bg_x1 + 8, bg_y2 - 6), font, font_scale, (240, 240, 240), thickness, cv2.LINE_AA)
 
     @staticmethod
+    def draw_speed_distance(frame, players_data, speeds, total_dist):
+        """رسم السرعة اللحظية والمسافة الكلية فوق كل لاعب بشكل عصري"""
+        for p in players_data:
+            tid = p.get('track_id')
+            if tid is None: continue
+
+            x1, y1, x2, y2 = p['bbox']
+            color = p.get('color', (200, 200, 200))
+
+            speed_ms = speeds.get(tid, 0.0)
+            speed_kmh = speed_ms * 3.6
+            dist_m = total_dist.get(tid, 0.0)
+
+            line1 = f"{speed_kmh:.1f} km/h"
+            line2 = f"{dist_m:.0f} m"
+
+            font = cv2.FONT_HERSHEY_DUPLEX
+            scale = 0.4
+            thickness = 1
+
+            (w1, h1), _ = cv2.getTextSize(line1, font, scale, thickness)
+            (w2, h2), _ = cv2.getTextSize(line2, font, scale, thickness)
+
+            box_w = max(w1, w2) + 14
+            box_h = h1 + h2 + 18
+            center_x = int((x1 + x2) / 2)
+            bx1 = center_x - box_w // 2
+            bx2 = center_x + box_w // 2
+            by1 = int(y2) + 6
+            by2 = by1 + box_h
+
+            # خلفية شفافة
+            sub = frame[by1:by2, bx1:bx2]
+            if sub.shape[0] > 0 and sub.shape[1] > 0:
+                black = np.full_like(sub, (20, 20, 20))
+                cv2.addWeighted(black, 0.75, sub, 0.25, 0, sub)
+                frame[by1:by2, bx1:bx2] = sub
+
+            # شريط علوي بلون الفريق
+            cv2.line(frame, (bx1, by1), (bx2, by1), color, 2)
+
+            # النصوص
+            cv2.putText(frame, line1, (bx1 + 7, by1 + h1 + 5),
+                        font, scale, (0, 230, 255), thickness, cv2.LINE_AA)
+            cv2.putText(frame, line2, (bx1 + 7, by1 + h1 + h2 + 12),
+                        font, scale, (200, 200, 200), thickness, cv2.LINE_AA)
+        return frame
+
+    @staticmethod
     def draw_annotations(frame, players_data, ball_data=None):
         for data in players_data:
             x1, y1, x2, y2 = data['bbox']

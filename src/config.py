@@ -9,7 +9,7 @@ NUMBER_RECOGNIZER_WEIGHTS = os.path.join(BASE_DIR, "weights", "jersey_recognitio
 
 # مسارات الفيديوهات
 INPUT_VIDEO_PATH = os.path.join(BASE_DIR, "data", "input_data", "7.mp4")
-OUTPUT_VIDEO_PATH = os.path.join(BASE_DIR, "data", "output_data", "result10.mp4")
+OUTPUT_VIDEO_PATH = os.path.join(BASE_DIR, "data", "output_data", "final_result.mp4")
 
 # إعدادات النماذج
 CONFIDENCE_THRESHOLD = 0.25 # نسبة الثقة لاعتماد إن فيه لاعب في المربع
