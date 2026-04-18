@@ -44,11 +44,6 @@ def main():
     ball_tracker = BallTracker("yolo26m.pt", max_missing_frames=7)
     voter = NumberVotingSystem(required_frames=30)
     stats_tracker = MatchStats() # نظام الاستحواذ
-    speed_tracker = SpeedDistanceTracker(fps=fps if fps > 0 else 25)
-    heatmap_tracker = HeatmapTracker(
-        pitch_image_path=os.path.join(BASE_DIR, "data", "pitch_topdown.png"),
-        output_dir=os.path.join(BASE_DIR, "data", "output_data", "heatmaps")
-    )
     
     # 🔴 تحميل موديل السجمنتيشن للملعب للرادار
     pitch_segmenter = YOLO(os.path.join(BASE_DIR, "weights", "Studiam_seg.pt"))
@@ -69,7 +64,13 @@ def main():
     fps = int(cap.get(cv2.CAP_PROP_FPS)) or 25
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(OUTPUT_VIDEO_PATH, fourcc, fps, (width, height))
-    speed_tracker.fps = fps
+
+    # تهيئة تتبع السرعة والمسافة والـ Heatmap (بعد قراءة الـ fps)
+    speed_tracker = SpeedDistanceTracker(fps=fps)
+    heatmap_tracker = HeatmapTracker(
+        pitch_image_path=os.path.join(BASE_DIR, "data", "pitch_topdown.png"),
+        output_dir=os.path.join(BASE_DIR, "data", "output_data", "heatmaps")
+    )
     frame_count = 0
      # هنحتاج نقرأ أول فريم بس عشان نعرف أبعاد الفيديو
     ret, first_frame = cap.read()
