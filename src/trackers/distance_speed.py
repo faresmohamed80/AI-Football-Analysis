@@ -11,6 +11,7 @@ class SpeedDistanceTracker:
         self.prev_positions = {}
         self.total_distance = defaultdict(float)
         self.speeds = {}
+        self.max_speeds = defaultdict(float)  # تتبع أقصى سرعة لكل لاعب
 
         # 🔥 history للـ smoothing
         self.speed_history = defaultdict(list)
@@ -65,6 +66,10 @@ class SpeedDistanceTracker:
                 smooth_speed = np.mean(self.speed_history[track_id])
 
                 self.speeds[track_id] = smooth_speed
+                
+                # تحديث أقصى سرعة مسجلة لهذا اللاعب
+                if smooth_speed > self.max_speeds[track_id]:
+                    self.max_speeds[track_id] = smooth_speed
 
             self.prev_positions[track_id] = current_pos
 

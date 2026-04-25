@@ -1,6 +1,7 @@
 import cv2
 import json
 import os
+import requests
 
 # استدعاء إعدادات المسارات
 from src.config import *
@@ -32,6 +33,47 @@ def load_player_database(file_path):
 
 
 
+def send_results_to_backend(match_id: int, backend_url: str, stats_tracker, speed_tracker, player_names_map: dict):
+    """Sends the final match analysis results to the backend API."""
+    final_stats = stats_tracker.get_possession_stats()
+    event_stats = stats_tracker.get_event_stats()
+
+    # Collect per-player speed and distance
+    player_stats = []
+    for track_id, distance in speed_tracker.total_distance.items():
+        player_stats.append({
+            "track_id": track_id,
+            "player_name": player_names_map.get(track_id, f"Player #{track_id}"),
+            "total_distance": round(float(distance), 2),
+            "top_speed_kmh": round(float(speed_tracker.max_speeds.get(track_id, 0)) * 3.6, 2)
+        })
+
+    payload = {
+        "match_id": match_id,
+        "team_stats": {
+            "possession": final_stats,
+            "passes_red": event_stats["passes_red"],
+            "passes_green": event_stats["passes_green"],
+            "interceptions_red": event_stats["interceptions_red"],
+            "interceptions_green": event_stats["interceptions_green"]
+        },
+        "player_stats": player_stats
+    }
+
+    try:
+        response = requests.post(
+            f"{backend_url}/api/v1/ai/analyze-match/{match_id}",
+            json=payload,
+            timeout=10
+        )
+        print(f"✅ Results sent to backend: {response.status_code}")
+        print(response.json())
+    except requests.exceptions.ConnectionError:
+        print(f"⚠️ Could not connect to backend at {backend_url}. Results were NOT sent.")
+    except Exception as e:
+        print(f"⚠️ Failed to send results: {e}")
+
+
 def main():
     print("⚙️ Loading models and systems... Please wait.")
     
@@ -41,7 +83,7 @@ def main():
     team_classifier = TeamClassifier()
     
     # 2. Initialize tracking and stats systems
-    ball_tracker = BallTracker("yolo26x.pt", max_missing_frames=7)
+    ball_tracker = BallTracker(BALL_DETECTOR_WEIGHTS, max_missing_frames=7)
     voter = NumberVotingSystem(required_frames=30)
     stats_tracker = MatchStats() # Possession tracking system
     
@@ -72,6 +114,7 @@ def main():
         output_dir=os.path.join(BASE_DIR, "data", "output_data", "heatmaps")
     )
     frame_count = 0
+    player_names_map = {}  # {track_id: player_name} — updated each frame for the backend report
      # هنحتاج نقرأ أول فريم بس عشان نعرف أبعاد الفيديو
     ret, first_frame = cap.read()
     if not ret: return
@@ -161,6 +204,9 @@ def main():
                 'team': team_name,
                 'color': box_color
             })
+            # Update the running name lookup for the backend report
+            if player_display_name not in ("Identifying...", "Unknown"):
+                player_names_map[track_id] = player_display_name
 
         # ---------------------------------------------------------
         # ب. معالجة الكرة ⚽
@@ -233,6 +279,10 @@ def main():
     print(f"🔴 Red Team Interceptions: {event_stats['interceptions_red']}")
     print(f"🟢 Green Team Interceptions: {event_stats['interceptions_green']}")
     print(f"\nVideo saved to: {OUTPUT_VIDEO_PATH}")
+
+    # Send results to backend
+    print("\n📡 Sending results to backend...")
+    send_results_to_backend(MATCH_ID, BACKEND_URL, stats_tracker, speed_tracker, player_names_map)
 
 if __name__ == "__main__":
     main()

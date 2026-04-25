@@ -118,15 +118,21 @@ class MatchStats:
                         
                     elif self.last_possessor_team != closest_team:
                         # فريق مختلف -> اعتراض/قطع (Interception/Tackle)
-                        if closest_team == "Red Team":
-                            self.event_counts["interceptions_red"] += 1
-                            self.alert_color = (0, 0, 255) # أحمر للاعتراض
+                        # 🔥 تعديل احترافي: لا نحسبها اعتراض إلا لو كان الفريق التاني فاقد الكورة من وقت قليل جداً (أقل من ثانية)
+                        # لو الكورة كانت تائهة (Free Ball) لفترة طويلة، ده بيبقى مجرد "استلام كورة تائهة" مش اعتراض
+                        if self.frames_without_contact < 20: 
+                            if closest_team == "Red Team":
+                                self.event_counts["interceptions_red"] += 1
+                                self.alert_color = (0, 0, 255) # أحمر للاعتراض
+                            else:
+                                self.event_counts["interceptions_green"] += 1
+                                self.alert_color = (50, 255, 50) # أخضر للاعتراض
+                                
+                            self.current_alert = "INTERCEPTION!"
+                            self.alert_frames = 35
                         else:
-                            self.event_counts["interceptions_green"] += 1
-                            self.alert_color = (50, 255, 50) # أخضر للاعتراض
-                            
-                        self.current_alert = "INTERCEPTION!"
-                        self.alert_frames = 35
+                            # لو الكورة بقالها كتير حرة، بنحدث الاستحواذ بس بدون احتساب "اعتراض"
+                            pass
                 # ------------------------------
 
                 self.last_possessor_team = closest_team

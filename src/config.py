@@ -4,7 +4,8 @@ import os
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # مسارات النماذج (Weights)
-PLAYER_DETECTOR_WEIGHTS = os.path.join(BASE_DIR, "yolo26x.pt")
+PLAYER_DETECTOR_WEIGHTS = r"D:\offside\weights\detection_persons.pt"
+BALL_DETECTOR_WEIGHTS = r"D:\offside\weights\detect_ball_results\weights\best.pt"
 NUMBER_RECOGNIZER_WEIGHTS = os.path.join(BASE_DIR, "weights", "jersey_recognition.pt")
 
 # مسارات الفيديوهات
@@ -13,3 +14,11 @@ OUTPUT_VIDEO_PATH = os.path.join(BASE_DIR, "data", "output_data", "5_side_output
 
 # إعدادات النماذج
 CONFIDENCE_THRESHOLD = 0.25 # نسبة الثقة لاعتماد إن فيه لاعب في المربع
+MIN_INTERSECT_AREA = 0.1  # 10% مساحة تقاطع اللاعب
+MIN_PASS_LENGTH = 25     # طول الخط الأدنى (بكسل) لاعتباره تمريرة
+LINE_COLOR = (0, 255, 0) # لون الخط أخضر
+LINE_THICKNESS = 2       # سمك الخط
+
+# إعدادات الـ Backend API
+BACKEND_URL = "http://localhost:8000"  # غير الـ URL ده لو السيرفر بتاعك مختلف
+MATCH_ID = 1                           # ID المباراة الحالية
