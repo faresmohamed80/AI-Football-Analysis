@@ -3,7 +3,7 @@ import numpy as np
 
 class BallTracker:
     def __init__(self, weights_path, max_missing_frames=5):
-        print("⚽ جاري تحميل موديل الكرة...")
+        print("⚽ Loading ball detection model...")
         self.model = YOLO(weights_path)
         
         # متغيرات التوقع (Interpolation)

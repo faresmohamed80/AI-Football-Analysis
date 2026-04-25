@@ -3,9 +3,9 @@ import cv2
 
 class NumberRecognizer:
     def __init__(self, weights_path):
-        """تحميل موديل قراءة الأرقام الفعلي"""
-        print("جاري تحميل موديل قراءة الأرقام الحقيقي...")
-        # تحميل موديل الأرقام الخاص بك (المتدرب على 0-9)
+        """Load the jersey number recognition model"""
+        print("Loading jersey number recognition model...")
+        # Load your custom weights (trained on 0-9)
         self.model = YOLO(weights_path)
 
     def recognize(self, frame, bbox):

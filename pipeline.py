@@ -33,29 +33,29 @@ def load_player_database(file_path):
 
 
 def main():
-    print("⚙️ جاري تحميل النماذج والأنظمة (Models)... يرجى الانتظار.")
+    print("⚙️ Loading models and systems... Please wait.")
     
-    # 1. تهيئة النماذج الأساسية
+    # 1. Initialize core detectors
     player_detector = PlayerDetector(PLAYER_DETECTOR_WEIGHTS)
     number_recognizer = NumberRecognizer(NUMBER_RECOGNIZER_WEIGHTS)
     team_classifier = TeamClassifier()
     
-    # 2. تهيئة أنظمة التتبع والإحصائيات
-    ball_tracker = BallTracker("yolo26m.pt", max_missing_frames=7)
+    # 2. Initialize tracking and stats systems
+    ball_tracker = BallTracker("yolo26x.pt", max_missing_frames=7)
     voter = NumberVotingSystem(required_frames=30)
-    stats_tracker = MatchStats() # نظام الاستحواذ
+    stats_tracker = MatchStats() # Possession tracking system
     
-    # 🔴 تحميل موديل السجمنتيشن للملعب للرادار
+    # 🔴 Loading stadium segmentation model for radar
     pitch_segmenter = YOLO(os.path.join(BASE_DIR, "weights", "Studiam_seg.pt"))
     
-    # 3. تحميل قاعدة بيانات اللاعبين
+    # 3. Load player database
     db_path = os.path.join(BASE_DIR, "data", "players_database.json")
     player_db = load_player_database(db_path)
 
-    # 4. فتح فيديو الإدخال
+    # 4. Open input video
     cap = cv2.VideoCapture(INPUT_VIDEO_PATH)
     if not cap.isOpened():
-        print(f"❌ خطأ: مش قادر أفتح الفيديو. تأكد من وجوده في: {INPUT_VIDEO_PATH}")
+        print(f"❌ Error: Cannot open video. Ensure it exists at: {INPUT_VIDEO_PATH}")
         return
 
     # إعدادات فيديو الإخراج
@@ -84,17 +84,40 @@ def main():
     # 🔴 تهيئة الـ Semantic Mapper الجديد
     semantic_mapper = SemanticPitchMapper(radar_w=radar.radar_w, radar_h=radar.radar_h)
 
-    print("🚀 بدأ تحليل الفيديو الشامل (AI Referee & Stats System)...")
+    print("🚀 Starting comprehensive video analysis (AI Referee & Stats System)...")
 
-    # 5. الحلقة التكرارية لمعالجة الفيديو فريم بفريم
+    # 🔴 Select clip to analyze (from the 1st minute for 30 seconds)
+    start_time_sec = 220
+    duration_sec = 20
+    start_frame = int(start_time_sec * fps)
+    total_frames_to_process = int(duration_sec * fps)
+    end_frame = start_frame + total_frames_to_process
+    
+    success = cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    if not success:
+        print(f"⚠️ Warning: cap.set failed. Manually skipping to frame {start_frame}...")
+        for _ in range(start_frame):
+            ret, _ = cap.read()
+            if not ret: break
+
+    print(f"🎞️ Analysis will process {total_frames_to_process} frames (approx {duration_sec}s).")
+
+    # 5. Main loop for processing frame by frame
     while True:
         ret, frame = cap.read()
         if not ret:
-            break  # الفيديو انتهى
+            break  # End of video
+            
+        current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+        
+        # Stop after processing the requested number of frames
+        if frame_count >= total_frames_to_process:
+            print(f"⏹️ Processed {total_frames_to_process} frames. Analysis complete.")
+            break
 
         frame_count += 1
         if frame_count % 30 == 0:
-            print(f"⏳ جاري معالجة الفريم رقم {frame_count}...")
+            print(f"⏳ Processing frame {current_frame} ({frame_count}/{total_frames_to_process})...")
 
         # ---------------------------------------------------------
         # تحديث إزاحة الكاميرا (Pan) عبر المعالم السيمانتيكية
@@ -104,7 +127,7 @@ def main():
             dx, dy = semantic_mapper.get_camera_offset(seg_results, w, h, radar.matrix)
             radar.update_matrix(dx, dy)
         except Exception as e:
-            print(f"⚠️ خطأ في حساب إزاحة الكاميرا: {e}")
+            print(f"⚠️ Camera offset calculation error: {e}")
 
         # ---------------------------------------------------------
         # أ. معالجة اللاعبين (الأساس)
@@ -195,12 +218,21 @@ def main():
     # 7. توليد صور الـ Heatmap لكل لاعب
     heatmap_tracker.generate_heatmaps(min_frames=30)
     
-    # طباعة النتيجة النهائية للاستحواذ في الكونسول
     final_stats = stats_tracker.get_possession_stats()
-    print(f"\n✅ تم الانتهاء! النتيجة النهائية للاستحواذ:")
-    print(f"🔵 الفريق الأزرق: {final_stats['Blue Team']}%")
-    print(f"⚪ الفريق الأبيض: {final_stats['White Team']}%")
-    print(f"الفيديو النهائي محفوظ في: {OUTPUT_VIDEO_PATH}")
+    event_stats = stats_tracker.get_event_stats()
+    
+    print(f"\n✅ Finished! Final Statistics:")
+    print(f"🔴 Red Team Possession: {final_stats['Red Team']}%")
+    print(f"🟢 Green Team Possession: {final_stats['Green Team']}%")
+    
+    print(f"\n🔄 Events (Passes):")
+    print(f"🔴 Red Team Passes: {event_stats['passes_red']}")
+    print(f"🟢 Green Team Passes: {event_stats['passes_green']}")
+    
+    print(f"\n⚔️ Events (Interceptions/Tackles):")
+    print(f"🔴 Red Team Interceptions: {event_stats['interceptions_red']}")
+    print(f"🟢 Green Team Interceptions: {event_stats['interceptions_green']}")
+    print(f"\nVideo saved to: {OUTPUT_VIDEO_PATH}")
 
 if __name__ == "__main__":
     main()

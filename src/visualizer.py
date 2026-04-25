@@ -4,19 +4,25 @@ import numpy as np
 class Visualizer:
     @staticmethod
     def draw_player_base(frame, x1, y1, x2, y2, color):
-        """رسم تأثير الدائرة بالمنظور (الظل والإضاءة) تحت أقدام اللاعب"""
+        """رسم دائرة تحت أقدام اللاعب (أسلوب Supervision)"""
         center_x = int((x1 + x2) / 2)
         y_bottom = int(y2)
         
-        axes_x = int((x2 - x1) * 0.6) 
-        axes_y = int(axes_x * 0.35)  
+        # أبعاد البيضاوي (Ellipse)
+        axes_x = int((x2 - x1) * 0.5) 
+        axes_y = int(axes_x * 0.3)  
         
-        # دائرة خارجية (إطار)
-        cv2.ellipse(frame, (center_x, y_bottom), (axes_x, axes_y), 0, 0, 360, (0, 0, 0), 3, cv2.LINE_AA)
+        # إنشاء طبقة شفافة للبيضاوي (للشياكة)
+        overlay = frame.copy()
+        cv2.ellipse(overlay, (center_x, y_bottom), (axes_x, axes_y), 0, 0, 360, color, -1, cv2.LINE_AA)
+        
+        # دمج الطبقة الشفافة
+        alpha = 0.3 # شفافية الحشو
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+        
+        # رسم إطار خارجي حاد
         cv2.ellipse(frame, (center_x, y_bottom), (axes_x, axes_y), 0, 0, 360, color, 2, cv2.LINE_AA)
-        
-        # توهج خفيف داخل الدائرة
-        cv2.ellipse(frame, (center_x, y_bottom), (int(axes_x*0.6), int(axes_y*0.6)), 0, 0, 360, color, -1, cv2.LINE_AA)
+        cv2.ellipse(frame, (center_x, y_bottom), (axes_x, axes_y), 0, 0, 360, (0, 0, 0), 1, cv2.LINE_AA)
 
     @staticmethod
     def draw_player_label(frame, x1, y1, x2, y2, label, color):

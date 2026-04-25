@@ -113,3 +113,7 @@ class SemanticPitchMapper:
                 self.current_dy = (self.smoothing * detected_dy) + ((1 - self.smoothing) * self.current_dy)
         
         return int(self.current_dx), int(self.current_dy)
+
+    def get_homography(self, pose_results):
+        """Added for compatibility during transitions"""
+        return None

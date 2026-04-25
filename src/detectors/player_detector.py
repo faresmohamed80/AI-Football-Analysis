@@ -3,7 +3,7 @@ from src.config import CONFIDENCE_THRESHOLD
 
 class PlayerDetector:
     def __init__(self, weights_path):
-        print("جاري تحميل موديل اللاعبين (مع نظام التتبع)...")
+        print("Loading player detection model (with tracking)...")
         self.model = YOLO(weights_path)
 
     def detect(self, frame):

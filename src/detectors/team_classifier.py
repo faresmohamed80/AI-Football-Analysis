@@ -3,24 +3,30 @@ import numpy as np
 
 class TeamClassifier:
     def __init__(self):
-        # إعدادات ألوان الـ HSV (مضبوطة على إضاءة الملاعب)
-        # 🔵 الفريق الأزرق (تشيلسي)
-        self.lower_blue = np.array([90, 50, 50])
-        self.upper_blue = np.array([130, 255, 255])
+        # إعدادات ألوان الـ HSV (مضبوطة لمباراة الخماسي)
+        # 🔴 الفريق الأحمر
+        self.lower_red1 = np.array([0, 70, 50])
+        self.upper_red1 = np.array([10, 255, 255])
+        self.lower_red2 = np.array([160, 70, 50])
+        self.upper_red2 = np.array([180, 255, 255])
         
-        # ⚪ الفريق الأبيض (سوانزي) - تشبع لوني قليل وإضاءة عالية
-        self.lower_white = np.array([0, 0, 180])
-        self.upper_white = np.array([180, 50, 255])
+        # 🟠 حارس الفريق الأحمر (برتقالي)
+        self.lower_orange = np.array([10, 100, 100])
+        self.upper_orange = np.array([22, 255, 255])
         
-        # ⚫ الحكم (أسود) - إضاءة قليلة جداً
-        self.lower_black = np.array([0, 0, 0])
-        self.upper_black = np.array([180, 255, 50])
+        # 🟢 الفريق الأخضر الفاتح
+        self.lower_green = np.array([35, 50, 50])
+        self.upper_green = np.array([85, 255, 255])
+        
+        # 🟡 حارس الفريق الأخضر (أصفر) - تم دمجه هنا
+        self.lower_yellow = np.array([20, 100, 100])
+        self.upper_yellow = np.array([35, 255, 255])
 
         self.box_colors = {
-            "Blue Team": (255, 0, 0),     # مربع أزرق (OpenCV BGR)
-            "White Team": (255, 255, 255),# مربع أبيض
-            "Referee": (0, 0, 0),         # مربع أسود
-            "Unknown": (0, 255, 0)        # مربع أخضر
+            "Red Team": (0, 0, 255),      # BGR الأحمر
+            "Green Team": (0, 255, 0),    # BGR الأخضر
+            "Referee": (0, 255, 255),     # BGR الأصفر
+            "Unknown": (128, 128, 128)
         }
 
     def get_player_team(self, frame, bbox):
@@ -48,26 +54,29 @@ class TeamClassifier:
         hsv_crop = cv2.cvtColor(shirt_crop, cv2.COLOR_BGR2HSV)
 
         # 4. عمل ماسكات (Masks) لكل لون
-        mask_blue = cv2.inRange(hsv_crop, self.lower_blue, self.upper_blue)
-        mask_white = cv2.inRange(hsv_crop, self.lower_white, self.upper_white)
-        mask_black = cv2.inRange(hsv_crop, self.lower_black, self.upper_black)
+        mask_red1 = cv2.inRange(hsv_crop, self.lower_red1, self.upper_red1)
+        mask_red2 = cv2.inRange(hsv_crop, self.lower_red2, self.upper_red2)
+        mask_red = cv2.bitwise_or(mask_red1, mask_red2)
+        
+        mask_orange = cv2.inRange(hsv_crop, self.lower_orange, self.upper_orange)
+        mask_green = cv2.inRange(hsv_crop, self.lower_green, self.upper_green)
+        mask_yellow = cv2.inRange(hsv_crop, self.lower_yellow, self.upper_yellow)
 
         # 5. عد البيكسلات المطابقة لكل لون في منطقة الصدر
-        blue_pixels = cv2.countNonZero(mask_blue)
-        white_pixels = cv2.countNonZero(mask_white)
-        black_pixels = cv2.countNonZero(mask_black)
+        # 🔴 دمج الأحمر مع البرتقالي (الحارس)
+        red_pixels = cv2.countNonZero(mask_red) + cv2.countNonZero(mask_orange)
+        # 🟢 دمج الأخضر مع الأصفر (الحارس)
+        green_pixels = cv2.countNonZero(mask_green) + cv2.countNonZero(mask_yellow)
 
         # 6. تحديد الفريق صاحب أعلى عدد بيكسلات
-        max_pixels = max(blue_pixels, white_pixels, black_pixels)
+        max_pixels = max(red_pixels, green_pixels)
 
         # لو مفيش أي لون واضح (تجاهل)
         if max_pixels < 5:
             return "Unknown", self.box_colors["Unknown"]
 
         # إرجاع اسم الفريق ولون المربع
-        if max_pixels == blue_pixels:
-            return "Blue Team", self.box_colors["Blue Team"]
-        elif max_pixels == white_pixels:
-            return "White Team", self.box_colors["White Team"]
+        if max_pixels == red_pixels:
+            return "Red Team", self.box_colors["Red Team"]
         else:
-            return "Referee", self.box_colors["Referee"]
+            return "Green Team", self.box_colors["Green Team"]

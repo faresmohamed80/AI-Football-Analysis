@@ -32,6 +32,13 @@ class PitchRadar:
         self.dx = 0
         self.dy = 0
 
+    def set_matrix(self, matrix):
+        """تحديث المصفوفة بالكامل (مثل هوموجرافي المفاصل)"""
+        if matrix is not None:
+            self.matrix = matrix
+            self.dx = 0 # تصفير الإزاحة لأن المصفوفة الجديدة تشمل كل شيء
+            self.dy = 0
+
     def update_matrix(self, dx, dy):
         """تحديث زاوية الرادار ديناميكياً باستخدام إزاحة الكاميرا (Panning)"""
         if dx is not None and dy is not None:
