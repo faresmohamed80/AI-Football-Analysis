@@ -102,38 +102,64 @@ class Visualizer:
         return frame
 
     @staticmethod
-    def draw_annotations(frame, players_data, ball_data=None):
+    def draw_possession_indicator(frame, x1, y1, x2, y2, color):
+        """رسم مثلث متوهج فوق اللاعب الأقرب للكرة للدلالة على الاستحواذ."""
+        center_x = int((x1 + x2) / 2)
+        tip_y    = int(y1) - 12          # رأس المثلث
+        base_y   = tip_y - 20            # قاعدة المثلث
+        half_w   = 10
+
+        pt1 = (center_x,          tip_y)
+        pt2 = (center_x - half_w, base_y)
+        pt3 = (center_x + half_w, base_y)
+        tri = np.array([pt1, pt2, pt3])
+
+        # ظل أسود للعمق
+        shadow = tri + np.array([2, 2])
+        cv2.drawContours(frame, [shadow], 0, (0, 0, 0), -1, cv2.LINE_AA)
+        # مثلث ملون شفاف
+        overlay = frame.copy()
+        cv2.drawContours(overlay, [tri], 0, color, -1, cv2.LINE_AA)
+        cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+        # إطار المثلث
+        cv2.drawContours(frame, [tri], 0, (255, 255, 255), 1, cv2.LINE_AA)
+
+    @staticmethod
+    def draw_annotations(frame, players_data, ball_data=None, closest_player_id=None):
         for data in players_data:
             x1, y1, x2, y2 = data['bbox']
-            name = data['name']
-            team = data.get('team', 'Unknown')
-            color = data.get('color', (0, 255, 0)) 
-            
-            # رسم المؤثرات العصرية بدل المستطيل
+            name  = data['name']
+            color = data.get('color', (0, 255, 0))
+            tid   = data.get('track_id')
+
+            # رسم القاعدة البيضاوية
             Visualizer.draw_player_base(frame, x1, y1, x2, y2, color)
             Visualizer.draw_player_label(frame, x1, y1, x2, y2, name, color)
 
-        # 2. رسم الكرة بطريقة عصرية ⚽
+            # مثلث الاستحواذ فوق اللاعب الأقرب للكرة
+            if tid is not None and tid == closest_player_id:
+                Visualizer.draw_possession_indicator(frame, x1, y1, x2, y2, color)
+
+        # رسم الكرة ⚽
         if ball_data is not None:
             bbox, is_interpolated = ball_data
             if bbox is not None:
                 x1, y1, x2, y2 = bbox
-                
+
                 center_x = int((x1 + x2) / 2)
                 center_y = int((y1 + y2) / 2)
-                radius = int(max(x2 - x1, y2 - y1) / 2) + 2 
+                radius   = int(max(x2 - x1, y2 - y1) / 2) + 2
 
-                color = (0, 0, 255) if is_interpolated else (0, 215, 255) # برتقالي متوهج للكرة الحقيقية
-                
-                # رسم تأثير توهج الكرة
-                cv2.circle(frame, (center_x, center_y), radius+2, (0,0,0), 2, cv2.LINE_AA)
-                cv2.circle(frame, (center_x, center_y), radius, color, -1 if is_interpolated else 2, cv2.LINE_AA)
-                
-                # مؤشر مثلث يطفو فوق الكرة
-                pt1 = (center_x, center_y - radius - 8)
+                color = (0, 0, 255) if is_interpolated else (0, 215, 255)
+
+                cv2.circle(frame, (center_x, center_y), radius + 2, (0, 0, 0), 2, cv2.LINE_AA)
+                cv2.circle(frame, (center_x, center_y), radius, color,
+                           -1 if is_interpolated else 2, cv2.LINE_AA)
+
+                # مثلث صغير فوق الكرة
+                pt1 = (center_x,     center_y - radius - 8)
                 pt2 = (center_x - 6, center_y - radius - 18)
                 pt3 = (center_x + 6, center_y - radius - 18)
-                triangle_cnt = np.array([pt1, pt2, pt3])
-                cv2.drawContours(frame, [triangle_cnt], 0, color, -1, cv2.LINE_AA)
-                
-        return frame
+                cv2.drawContours(frame, [np.array([pt1, pt2, pt3])], 0, color, -1, cv2.LINE_AA)
+
+        return frame

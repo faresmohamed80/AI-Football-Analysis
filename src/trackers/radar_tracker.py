@@ -74,13 +74,18 @@ class PitchRadar:
             rx += self.dx
             ry += self.dy
 
-            # تحديد اللون (أزرق وأبيض وأسود)
-            color = (255, 0, 0) if team == "Blue Team" else (255, 255, 255)
-            
-            # رسم الدائرة لو النقطة جوه الرادار
+            # Team color on radar
+            if team == "Red Team":
+                color = (60, 60, 255)    # Red (BGR)
+            elif team == "Green Team":
+                color = (60, 200, 60)    # Green (BGR)
+            else:
+                color = (200, 200, 200)  # fallback grey
+
+            # Draw player dot if inside radar bounds
             if 0 <= rx <= self.radar_w and 0 <= ry <= self.radar_h:
                 cv2.circle(radar_img, (rx, ry), 5, color, -1, cv2.LINE_AA)
-                cv2.circle(radar_img, (rx, ry), 7, (220, 220, 220), 1, cv2.LINE_AA) 
+                cv2.circle(radar_img, (rx, ry), 7, (240, 240, 240), 1, cv2.LINE_AA)
                 cv2.circle(radar_img, (rx, ry), 9, (0, 0, 0), 1, cv2.LINE_AA) 
 
         # دمج الرادار في الركن السفلي الأيمن من الفيديو الأصلي بطريقة عصرية (شفافية)

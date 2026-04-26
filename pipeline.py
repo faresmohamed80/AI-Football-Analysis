@@ -87,8 +87,9 @@ def main():
     voter = NumberVotingSystem(required_frames=30)
     stats_tracker = MatchStats() # Possession tracking system
     
-    # 🔴 Loading stadium segmentation model for radar
-    pitch_segmenter = YOLO(os.path.join(BASE_DIR, "weights", "Studiam_seg.pt"))
+    # 🔴 Futsal pitch keypoint model (500 epochs, conf=0.4) — replaces segmentation
+    pitch_pose_model = YOLO(PITCH_POSE_WEIGHTS)
+    pitch_pose_conf  = 0.4
     
     # 3. Load player database
     db_path = os.path.join(BASE_DIR, "data", "players_database.json")
@@ -166,30 +167,34 @@ def main():
         # تحديث إزاحة الكاميرا (Pan) عبر المعالم السيمانتيكية
         # ---------------------------------------------------------
         try:
-            seg_results = pitch_segmenter(frame, verbose=False)
-            dx, dy = semantic_mapper.get_camera_offset(seg_results, w, h, radar.matrix)
-            radar.update_matrix(dx, dy)
+            kp_results = pitch_pose_model(frame, conf=pitch_pose_conf, verbose=False)
+            new_matrix = semantic_mapper.get_homography(kp_results)
+            if new_matrix is not None:
+                radar.set_matrix(new_matrix)
         except Exception as e:
-            print(f"⚠️ Camera offset calculation error: {e}")
+            print(f"⚠️ Pitch pose error: {e}")
 
         # ---------------------------------------------------------
         # أ. معالجة اللاعبين (الأساس)
         # ---------------------------------------------------------
-        tracked_players = player_detector.detect(frame)
+        tracked_persons = player_detector.detect(frame)   # returns (track_id, bbox, is_referee)
         players_data = []
-        
-        for track_id, bbox in tracked_players:
-            # تحديد الفريق (مع عزل النجيلة)
-            team_name, box_color = team_classifier.get_player_team(frame, bbox)
-            
-            # قراءة وتثبيت الرقم
+
+        for track_id, bbox, is_referee in tracked_persons:
+            # Referee flagged directly by the futsal detection model
+            if is_referee:
+                team_name = "Referee"
+                box_color = (0, 255, 255)  # cyan for referee
+            else:
+                team_name, box_color = team_classifier.get_player_team(frame, bbox)
+
+            # Read and stabilize jersey number
             if track_id in voter.final_numbers:
                 number = voter.final_numbers[track_id]
             else:
                 predicted_number = number_recognizer.recognize(frame, bbox)
                 number = voter.update(track_id, predicted_number)
-            
-            # ربط الرقم باسم اللاعب من الداتابيز
+
             if number == "Loading...":
                 player_display_name = "Identifying..."
             elif number is None or number == "":
@@ -198,13 +203,13 @@ def main():
                 player_display_name = player_db.get(str(number), f"Player #{number}")
 
             players_data.append({
-                'bbox': bbox,
-                'track_id': track_id,
-                'name': player_display_name,
-                'team': team_name,
-                'color': box_color
+                'bbox':       bbox,
+                'track_id':   track_id,
+                'name':       player_display_name,
+                'team':       team_name,
+                'color':      box_color,
+                'is_referee': is_referee
             })
-            # Update the running name lookup for the backend report
             if player_display_name not in ("Identifying...", "Unknown"):
                 player_names_map[track_id] = player_display_name
 
@@ -212,6 +217,26 @@ def main():
         # ب. معالجة الكرة ⚽
         # ---------------------------------------------------------
         ball_data = ball_tracker.track(frame)
+
+        # ---------------------------------------------------------
+        # Compute closest player to ball (for possession triangle)
+        # ---------------------------------------------------------
+        closest_player_id = None
+        if ball_data and ball_data[0] is not None:
+            ball_bbox = ball_data[0]
+            ball_cx = (ball_bbox[0] + ball_bbox[2]) / 2
+            ball_cy = (ball_bbox[1] + ball_bbox[3]) / 2
+            min_dist = float('inf')
+            for p in players_data:
+                if p.get('is_referee', False):
+                    continue   # لا نعتبر الحكم حاملاً للكرة
+                bx1, by1, bx2, by2 = p['bbox']
+                feet_x = (bx1 + bx2) / 2
+                feet_y = by2
+                dist = ((ball_cx - feet_x) ** 2 + (ball_cy - feet_y) ** 2) ** 0.5
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_player_id = p['track_id']
 
         # ---------------------------------------------------------
         # ج. حساب الإحصائيات (الاستحواذ + السرعة + الهيت ماب) 📊
@@ -239,7 +264,8 @@ def main():
         # د. الرسم على الفريم (Visualization) 🎨
         # ---------------------------------------------------------
         # 1. رسم المؤثرات حول اللاعبين والكرة
-        annotated_frame = Visualizer.draw_annotations(frame, players_data, ball_data)
+        annotated_frame = Visualizer.draw_annotations(frame, players_data, ball_data,
+                                                        closest_player_id=closest_player_id)
 
         # 2. رسم السرعة / المسافة فوق كل لاعب
         annotated_frame = Visualizer.draw_speed_distance(annotated_frame, players_data, speeds, total_dist)

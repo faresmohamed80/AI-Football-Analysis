@@ -4,8 +4,9 @@ import os
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # مسارات النماذج (Weights)
-PLAYER_DETECTOR_WEIGHTS = r"D:\offside\weights\detection_persons.pt"
-BALL_DETECTOR_WEIGHTS = r"D:\offside\weights\detect_ball_results\weights\best.pt"
+PLAYER_DETECTOR_WEIGHTS  = r"D:\offside\weights\detection Fustal\weights\best.pt"    # 250 epoch — يفرق بين لاعب وحكم
+BALL_DETECTOR_WEIGHTS    = r"D:\offside\weights\detect_ball_results\weights\best.pt"
+PITCH_POSE_WEIGHTS       = r"D:\offside\weights\Homography Estimation Fustal\weights\best.pt"  # 500 epoch — keypoints ملعب الصالات
 NUMBER_RECOGNIZER_WEIGHTS = os.path.join(BASE_DIR, "weights", "jersey_recognition.pt")
 
 # مسارات الفيديوهات
