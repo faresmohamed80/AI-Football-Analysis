@@ -1,7 +1,7 @@
 import cv2
 import json
 import os
-import requests
+from collections import deque
 
 # استدعاء إعدادات المسارات
 from src.config import *
@@ -24,76 +24,68 @@ from src.trackers.heatmap_tracker import HeatmapTracker
 # ---------------------------------------------------------
 from src.trackers.semantic_mapper import SemanticPitchMapper
 
-def load_player_database(file_path):
-    if os.path.exists(file_path):
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    print(f"⚠️ تحذير: ملف قاعدة البيانات غير موجود في {file_path}")
-    return {}
+from src.api_client import APIClient, hex_to_hsv, hex_to_bgr
 
-
-
-def send_results_to_backend(match_id: int, backend_url: str, stats_tracker, speed_tracker, player_names_map: dict):
-    """Sends the final match analysis results to the backend API."""
-    final_stats = stats_tracker.get_possession_stats()
-    event_stats = stats_tracker.get_event_stats()
-
-    # Collect per-player speed and distance
-    player_stats = []
-    for track_id, distance in speed_tracker.total_distance.items():
-        player_stats.append({
-            "track_id": track_id,
-            "player_name": player_names_map.get(track_id, f"Player #{track_id}"),
-            "total_distance": round(float(distance), 2),
-            "top_speed_kmh": round(float(speed_tracker.max_speeds.get(track_id, 0)) * 3.6, 2)
-        })
-
-    payload = {
-        "match_id": match_id,
-        "team_stats": {
-            "possession": final_stats,
-            "passes_red": event_stats["passes_red"],
-            "passes_green": event_stats["passes_green"],
-            "interceptions_red": event_stats["interceptions_red"],
-            "interceptions_green": event_stats["interceptions_green"]
-        },
-        "player_stats": player_stats
-    }
-
-    try:
-        response = requests.post(
-            f"{backend_url}/api/v1/ai/analyze-match/{match_id}",
-            json=payload,
-            timeout=10
-        )
-        print(f"✅ Results sent to backend: {response.status_code}")
-        print(response.json())
-    except requests.exceptions.ConnectionError:
-        print(f"⚠️ Could not connect to backend at {backend_url}. Results were NOT sent.")
-    except Exception as e:
-        print(f"⚠️ Failed to send results: {e}")
-
+# ---------------------------------------------------------
+# (API will handle player data now)
+# ---------------------------------------------------------
 
 def main():
     print("⚙️ Loading models and systems... Please wait.")
     
+    # --- API Integration: Fetch Match Data ---
+    api = APIClient()
+    match_data = api.fetch_match_data(MATCH_ID)
+    
+    home_team = match_data["home_team"]
+    away_team = match_data["away_team"]
+    player_db = match_data["players_db"]
+
+    team_1_name = home_team.get("team_name") or TEAM_1_NAME
+    team_2_name = away_team.get("team_name") or TEAM_2_NAME
+    
+    # Fetch ALL color ranges from DB (primary + secondary + GK)
+    home_hsv_list = [
+        hex_to_hsv(home_team.get("primary_tshirt_colors")),
+        hex_to_hsv(home_team.get("secondary_tshirt_colors")),
+        hex_to_hsv(home_team.get("goalkeeper_tshirt_colors")),
+    ]
+    away_hsv_list = [
+        hex_to_hsv(away_team.get("primary_tshirt_colors")),
+        hex_to_hsv(away_team.get("secondary_tshirt_colors")),
+        hex_to_hsv(away_team.get("goalkeeper_tshirt_colors")),
+    ]
+    
+    # Filter out None values (NULL entries from DB)
+    team_1_hsv = [r for r in home_hsv_list if r is not None] or TEAM_1_HSV
+    team_2_hsv = [r for r in away_hsv_list if r is not None] or TEAM_2_HSV
+    
+    print(f"Team 1 ({team_1_name}) HSV Ranges: {len(team_1_hsv)} colors loaded from DB")
+    print(f"Team 2 ({team_2_name}) HSV Ranges: {len(team_2_hsv)} colors loaded from DB")
+    
+    team_1_bgr = hex_to_bgr(home_team.get("primary_tshirt_colors")) if home_team.get("primary_tshirt_colors") else TEAM_1_DISPLAY_COLOR
+    team_2_bgr = hex_to_bgr(away_team.get("primary_tshirt_colors")) if away_team.get("primary_tshirt_colors") else TEAM_2_DISPLAY_COLOR
+    # -----------------------------------------
+
     # 1. Initialize core detectors
     player_detector = PlayerDetector(PLAYER_DETECTOR_WEIGHTS)
     number_recognizer = NumberRecognizer(NUMBER_RECOGNIZER_WEIGHTS)
-    team_classifier = TeamClassifier()
+    team_classifier = TeamClassifier(
+        team_1_name=team_1_name, team_2_name=team_2_name,
+        team_1_hsv=team_1_hsv, team_2_hsv=team_2_hsv,
+        team_1_bgr=team_1_bgr, team_2_bgr=team_2_bgr
+    )
     
     # 2. Initialize tracking and stats systems
-    ball_tracker = BallTracker(BALL_DETECTOR_WEIGHTS, max_missing_frames=7)
-    voter = NumberVotingSystem(required_frames=30)
-    stats_tracker = MatchStats() # Possession tracking system
+    ball_tracker = BallTracker(BALL_DETECTOR_WEIGHTS, max_missing_frames=BALL_INTERPOLATION_MAX)
+    voter = NumberVotingSystem(required_frames=NUMBER_VOTING_FRAMES)
+    stats_tracker = MatchStats(
+        team_1_name=team_1_name, team_2_name=team_2_name,
+        team_1_color=team_1_bgr, team_2_color=team_2_bgr
+    )
     
-    # 🔴 Futsal pitch keypoint model (500 epochs, conf=0.4) — replaces segmentation
-    pitch_pose_model = YOLO(PITCH_POSE_WEIGHTS)
-    pitch_pose_conf  = 0.4
-    
-    # 3. Load player database
-    db_path = os.path.join(BASE_DIR, "data", "players_database.json")
-    player_db = load_player_database(db_path)
+    # 🔴 Loading stadium segmentation model for radar
+    pitch_segmenter = YOLO(STADIUM_SEGMENTER_WEIGHTS)
 
     # 4. Open input video
     cap = cv2.VideoCapture(INPUT_VIDEO_PATH)
@@ -111,31 +103,43 @@ def main():
     # تهيئة تتبع السرعة والمسافة والـ Heatmap (بعد قراءة الـ fps)
     speed_tracker = SpeedDistanceTracker(fps=fps)
     heatmap_tracker = HeatmapTracker(
-        pitch_image_path=os.path.join(BASE_DIR, "data", "pitch_topdown.png"),
+        pitch_image_path=PITCH_IMAGE_PATH,
         output_dir=os.path.join(BASE_DIR, "data", "output_data", "heatmaps")
     )
     frame_count = 0
-    player_names_map = {}  # {track_id: player_name} — updated each frame for the backend report
+    ball_trail = deque(maxlen=BALL_TRAIL_LENGTH)  # Ball position history for trail
      # هنحتاج نقرأ أول فريم بس عشان نعرف أبعاد الفيديو
     ret, first_frame = cap.read()
     if not ret: return
     h, w = first_frame.shape[:2]
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # نرجع الفيديو للأول تاني
 
-    # تهيئة كلاس الرادار الجديد
-    radar = PitchRadar(frame_w=w, frame_h=h)
+    # تهيئة رادار الملعب
+    radar_seg = PitchRadar(frame_w=w, frame_h=h, radar_w=400, radar_h=240)
     
-    # 🔴 تهيئة الـ Semantic Mapper الجديد
-    semantic_mapper = SemanticPitchMapper(radar_w=radar.radar_w, radar_h=radar.radar_h)
+    # 🔴 Semantic Mapper
+    semantic_mapper = SemanticPitchMapper(
+        radar_w=radar_seg.radar_w, 
+        radar_h=radar_seg.radar_h, 
+        smoothing=RADAR_SMOOTHING
+    )
 
-    print("🚀 Starting comprehensive video analysis (AI Referee & Stats System)...")
-
-    # 🔴 Select clip to analyze (from the 1st minute for 30 seconds)
-    start_time_sec = 220
-    duration_sec = 20
+    # 🔴 Select clip to analyze
+    total_video_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    video_duration_sec = total_video_frames / fps
+    
+    start_time_sec = 350 # Requested start
+    duration_sec = 30
+    
+    if start_time_sec >= video_duration_sec:
+        print(f"⚠️ Warning: Start time ({start_time_sec}s) is beyond video duration ({video_duration_sec:.1f}s). Resetting to 0.")
+        start_time_sec = 0
+        
     start_frame = int(start_time_sec * fps)
     total_frames_to_process = int(duration_sec * fps)
     end_frame = start_frame + total_frames_to_process
+    
+    print(f"🎞️ Video duration: {video_duration_sec:.1f}s. Processing {total_frames_to_process} frames starting from {start_time_sec}s.")
     
     success = cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     if not success:
@@ -145,6 +149,8 @@ def main():
             if not ret: break
 
     print(f"🎞️ Analysis will process {total_frames_to_process} frames (approx {duration_sec}s).")
+
+    track_id_to_name = {}
 
     # 5. Main loop for processing frame by frame
     while True:
@@ -164,79 +170,63 @@ def main():
             print(f"⏳ Processing frame {current_frame} ({frame_count}/{total_frames_to_process})...")
 
         # ---------------------------------------------------------
-        # تحديث إزاحة الكاميرا (Pan) عبر المعالم السيمانتيكية
+        # تحديث إزاحة الكاميرا (Pan) عبر المعالم السيمانتيكية (Segmentation)
         # ---------------------------------------------------------
         try:
-            kp_results = pitch_pose_model(frame, conf=pitch_pose_conf, verbose=False)
-            new_matrix = semantic_mapper.get_homography(kp_results)
-            if new_matrix is not None:
-                radar.set_matrix(new_matrix)
+            seg_results = pitch_segmenter(frame, conf=STADIUM_CONFIDENCE, verbose=False)
+            dx, dy = semantic_mapper.get_camera_offset(seg_results, w, h, radar_seg.matrix)
+            radar_seg.update_matrix(dx, dy)
         except Exception as e:
-            print(f"⚠️ Pitch pose error: {e}")
+            print(f"⚠️ Semantic offset calculation error: {e}")
 
         # ---------------------------------------------------------
         # أ. معالجة اللاعبين (الأساس)
         # ---------------------------------------------------------
-        tracked_persons = player_detector.detect(frame)   # returns (track_id, bbox, is_referee)
+        tracked_players = player_detector.detect(frame)
         players_data = []
-
-        for track_id, bbox, is_referee in tracked_persons:
-            # Referee flagged directly by the futsal detection model
-            if is_referee:
-                team_name = "Referee"
-                box_color = (0, 255, 255)  # cyan for referee
-            else:
-                team_name, box_color = team_classifier.get_player_team(frame, bbox)
-
-            # Read and stabilize jersey number
+        
+        for track_id, bbox in tracked_players:
+            # تحديد الفريق (مع عزل النجيلة)
+            team_name, box_color = team_classifier.get_player_team(frame, bbox)
+            
+            # قراءة وتثبيت الرقم
             if track_id in voter.final_numbers:
                 number = voter.final_numbers[track_id]
             else:
                 predicted_number = number_recognizer.recognize(frame, bbox)
                 number = voter.update(track_id, predicted_number)
-
+            
+            # ربط الرقم باسم اللاعب من الداتابيز
             if number == "Loading...":
                 player_display_name = "Identifying..."
             elif number is None or number == "":
                 player_display_name = "Unknown"
             else:
                 player_display_name = player_db.get(str(number), f"Player #{number}")
+                if player_display_name and player_display_name not in ["Identifying...", "Unknown"]:
+                    track_id_to_name[track_id] = player_display_name
 
             players_data.append({
-                'bbox':       bbox,
-                'track_id':   track_id,
-                'name':       player_display_name,
-                'team':       team_name,
-                'color':      box_color,
-                'is_referee': is_referee
+                'bbox': bbox,
+                'track_id': track_id,
+                'name': player_display_name,
+                'team': team_name,
+                'color': box_color
             })
-            if player_display_name not in ("Identifying...", "Unknown"):
-                player_names_map[track_id] = player_display_name
 
         # ---------------------------------------------------------
         # ب. معالجة الكرة ⚽
         # ---------------------------------------------------------
         ball_data = ball_tracker.track(frame)
 
-        # ---------------------------------------------------------
-        # Compute closest player to ball (for possession triangle)
-        # ---------------------------------------------------------
-        closest_player_id = None
-        if ball_data and ball_data[0] is not None:
-            ball_bbox = ball_data[0]
-            ball_cx = (ball_bbox[0] + ball_bbox[2]) / 2
-            ball_cy = (ball_bbox[1] + ball_bbox[3]) / 2
-            min_dist = float('inf')
-            for p in players_data:
-                if p.get('is_referee', False):
-                    continue   # لا نعتبر الحكم حاملاً للكرة
-                bx1, by1, bx2, by2 = p['bbox']
-                feet_x = (bx1 + bx2) / 2
-                feet_y = by2
-                dist = ((ball_cx - feet_x) ** 2 + (ball_cy - feet_y) ** 2) ** 0.5
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_player_id = p['track_id']
+        # Update ball trail with current real position (skip interpolated)
+        if ball_data is not None:
+            bbox, is_interpolated = ball_data
+            if bbox is not None and not is_interpolated:
+                bx1, by1, bx2, by2 = bbox
+                ball_cx = (bx1 + bx2) // 2
+                ball_cy = (by1 + by2) // 2
+                ball_trail.append((ball_cx, ball_cy))
 
         # ---------------------------------------------------------
         # ج. حساب الإحصائيات (الاستحواذ + السرعة + الهيت ماب) 📊
@@ -263,9 +253,12 @@ def main():
         # ---------------------------------------------------------
         # د. الرسم على الفريم (Visualization) 🎨
         # ---------------------------------------------------------
-        # 1. رسم المؤثرات حول اللاعبين والكرة
-        annotated_frame = Visualizer.draw_annotations(frame, players_data, ball_data,
-                                                        closest_player_id=closest_player_id)
+        # 1. Draw player/ball annotations (supervision)
+        annotated_frame = Visualizer.draw_annotations(
+            frame, players_data, ball_data,
+            possessor_name=stats_tracker.current_possessor,
+            ball_trail=ball_trail
+        )
 
         # 2. رسم السرعة / المسافة فوق كل لاعب
         annotated_frame = Visualizer.draw_speed_distance(annotated_frame, players_data, speeds, total_dist)
@@ -273,8 +266,11 @@ def main():
         # 3. رسم لوحة الإحصائيات الشفافة
         annotated_frame = stats_tracker.draw_stats(annotated_frame)
 
-        # 4. رسم الرادار المصغر في زاوية الشاشة
-        annotated_frame = radar.draw_radar(annotated_frame, players_data, ball_data)
+        # 4. رسم الرادار
+        annotated_frame = radar_seg.draw_radar(
+            annotated_frame, players_data, ball_data, 
+            position="bottom-left", title="Pitch Radar"
+        )
 
         # 4. عرض الفريم (بعد ما جمعنا عليه كل حاجة)
 
@@ -287,28 +283,55 @@ def main():
     cap.release()
     out.release()
 
-    # 7. توليد صور الـ Heatmap لكل لاعب
-    heatmap_tracker.generate_heatmaps(min_frames=30)
+    # 7. Generate Heatmap images for each player
+    heatmap_paths = heatmap_tracker.generate_heatmaps(min_frames=MIN_FRAMES_FOR_HEATMAP)
     
     final_stats = stats_tracker.get_possession_stats()
     event_stats = stats_tracker.get_event_stats()
     
     print(f"\n✅ Finished! Final Statistics:")
-    print(f"🔴 Red Team Possession: {final_stats['Red Team']}%")
-    print(f"🟢 Green Team Possession: {final_stats['Green Team']}%")
+    print(f"🔹 {team_1_name} Possession: {final_stats.get(team_1_name, 0)}%")
+    print(f"🔸 {team_2_name} Possession: {final_stats.get(team_2_name, 0)}%")
     
     print(f"\n🔄 Events (Passes):")
-    print(f"🔴 Red Team Passes: {event_stats['passes_red']}")
-    print(f"🟢 Green Team Passes: {event_stats['passes_green']}")
+    print(f"🔹 {team_1_name} Passes: {event_stats['passes_t1']}")
+    print(f"🔸 {team_2_name} Passes: {event_stats['passes_t2']}")
     
     print(f"\n⚔️ Events (Interceptions/Tackles):")
-    print(f"🔴 Red Team Interceptions: {event_stats['interceptions_red']}")
-    print(f"🟢 Green Team Interceptions: {event_stats['interceptions_green']}")
+    print(f"🔹 {team_1_name} Interceptions: {event_stats['inter_t1']}")
+    print(f"🔸 {team_2_name} Interceptions: {event_stats['inter_t2']}")
+    
     print(f"\nVideo saved to: {OUTPUT_VIDEO_PATH}")
 
-    # Send results to backend
-    print("\n📡 Sending results to backend...")
-    send_results_to_backend(MATCH_ID, BACKEND_URL, stats_tracker, speed_tracker, player_names_map)
+    # --- API Integration: Upload Heatmaps & Submit Results ---
+    heatmap_urls = {}
+    if heatmap_paths:
+        for player_name, h_path in heatmap_paths.items():
+            url = api.upload_heatmap(player_name, h_path)
+            if url:
+                heatmap_urls[player_name] = url
+                
+    # Prepare player stats
+    player_stats_payload = []
+    
+    for tid, t_dist in speed_tracker.total_distance.items():
+        p_name = track_id_to_name.get(tid, f"Player #{tid}")
+        t_speed = speed_tracker.top_speeds.get(tid, 0)
+        
+        player_stats_payload.append({
+            "track_id": int(tid),
+            "player_name": p_name,
+            "total_distance": float(t_dist),
+            "top_speed": float(t_speed)
+        })
+
+    api.submit_ai_results(
+        match_id=MATCH_ID,
+        final_stats=final_stats,
+        event_stats=event_stats,
+        player_stats=player_stats_payload,
+        heatmap_urls=heatmap_urls
+    )
 
 if __name__ == "__main__":
     main()

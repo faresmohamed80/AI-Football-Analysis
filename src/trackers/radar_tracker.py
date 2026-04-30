@@ -45,7 +45,7 @@ class PitchRadar:
             self.dx = dx
             self.dy = dy
 
-    def draw_radar(self, frame, players_data, ball_data):
+    def draw_radar(self, frame, players_data, ball_data, position="bottom-right", title=None):
         # إنشاء خلفية خضراء للرادار
         radar_img = np.zeros((self.radar_h, self.radar_w, 3), dtype=np.uint8)
         radar_img[:] = (34, 139, 34) # Forest Green
@@ -74,24 +74,27 @@ class PitchRadar:
             rx += self.dx
             ry += self.dy
 
-            # Team color on radar
-            if team == "Red Team":
-                color = (60, 60, 255)    # Red (BGR)
-            elif team == "Green Team":
-                color = (60, 200, 60)    # Green (BGR)
-            else:
-                color = (200, 200, 200)  # fallback grey
-
-            # Draw player dot if inside radar bounds
+            # تحديد اللون (أزرق وأبيض وأسود)
+            color = (255, 0, 0) if team == "Blue Team" else (255, 255, 255)
+            
+            # رسم الدائرة لو النقطة جوه الرادار
             if 0 <= rx <= self.radar_w and 0 <= ry <= self.radar_h:
                 cv2.circle(radar_img, (rx, ry), 5, color, -1, cv2.LINE_AA)
-                cv2.circle(radar_img, (rx, ry), 7, (240, 240, 240), 1, cv2.LINE_AA)
+                cv2.circle(radar_img, (rx, ry), 7, (220, 220, 220), 1, cv2.LINE_AA) 
                 cv2.circle(radar_img, (rx, ry), 9, (0, 0, 0), 1, cv2.LINE_AA) 
 
-        # دمج الرادار في الركن السفلي الأيمن من الفيديو الأصلي بطريقة عصرية (شفافية)
+        # كتابة اسم الرادار عشان نقارن
+        if title:
+            cv2.putText(radar_img, title, (10, 25), cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # دمج الرادار في الفيديو الأصلي
         h, w = frame.shape[:2]
         
-        radar_x = w - self.radar_w - 20
+        if position == "bottom-right":
+            radar_x = w - self.radar_w - 20
+        else:
+            radar_x = 20  # bottom-left
+            
         radar_y = h - self.radar_h - 20
         
         # إطار أبيض أنيق للرادار

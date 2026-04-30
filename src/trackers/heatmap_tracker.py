@@ -24,7 +24,9 @@ class HeatmapTracker:
             self.player_positions[player_identifier].append((norm_x, norm_y))
 
     def generate_heatmaps(self, min_frames=30):
-        print(f"\n🔥 Generating Thermal Heatmaps in: {self.output_dir}")
+        print(f"\n Generating Thermal Heatmaps in: {self.output_dir}")
+        generated_paths = {}  # {player_name: file_path}
+        
         for player_id, positions in self.player_positions.items():
             if len(positions) < min_frames:
                 continue 
@@ -66,5 +68,10 @@ class HeatmapTracker:
 
             plt.savefig(output_file, bbox_inches='tight', transparent=True)
             plt.close()
+            
+            # Save the path for uploading later
+            generated_paths[str(player_id)] = output_file
 
-        print("✅ All Thermal Heatmaps generated successfully!")
+        print(f"All Thermal Heatmaps generated! ({len(generated_paths)} players)")
+        return generated_paths  # {player_name: file_path}
+

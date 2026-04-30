@@ -1,226 +1,261 @@
 import cv2
 import numpy as np
+from src.config import (
+    STICKY_FRAMES,
+    REQUIRED_POSSESSION_FRAMES,
+    FEET_ZONE_HEIGHT_RATIO,
+    FEET_ZONE_WIDTH_EXPANSION,
+    TEAM_1_NAME,
+    TEAM_2_NAME,
+    TEAM_1_DISPLAY_COLOR,
+    TEAM_2_DISPLAY_COLOR,
+)
+
 
 class MatchStats:
-    def __init__(self, dynamic_ratio=0.35, required_frames=4, max_speed=20, sticky_frames=90):
-        self.dynamic_ratio = dynamic_ratio
-        self.required_frames = required_frames
-        self.max_speed = max_speed
+    """
+    Possession & event tracking based on bbox feet-zone intersection.
 
-        # --- Sticky Possession ---
-        self.sticky_frames = sticky_frames   
-        self.last_possessor_team = None
-        self.last_possessor_name = "Free Ball"
-        self.frames_without_contact = 0      
+    Logic:
+    ─────
+    • Ball is "at" a player if its centre falls inside the player's FEET ZONE
+      (bottom FEET_ZONE_HEIGHT_RATIO of their bounding box, slightly widened).
+    • A PASS is recorded when the ball moves from player A's feet zone →
+      player B's feet zone and both are on the SAME team.
+    • An INTERCEPTION is recorded when the ball moves from A → B and they are
+      on DIFFERENT teams.
+    • If the ball leaves A's zone and returns to A's zone (dribble), no event.
+    • Possession is "sticky": the last possessor keeps credit for STICKY_FRAMES
+      frames after the ball leaves their feet.
+    """
 
-        self.team_possession_frames = {
-            "Red Team": 0,
-            "Green Team": 0
-        }
-        self.total_possession_frames = 0
-        self.current_possessor = "Free Ball"
+    def __init__(self, team_1_name=TEAM_1_NAME, team_2_name=TEAM_2_NAME,
+                 team_1_color=TEAM_1_DISPLAY_COLOR, team_2_color=TEAM_2_DISPLAY_COLOR):
+        self.required_frames = REQUIRED_POSSESSION_FRAMES
+        self.sticky_frames   = STICKY_FRAMES
 
-        self.candidate_team = None
-        self.candidate_player = None
+        # ── Dynamic team names ─────────────────────────────────────────
+        self.team_1_name  = team_1_name
+        self.team_2_name  = team_2_name
+        self.team_1_color = team_1_color
+        self.team_2_color = team_2_color
+
+        # ── Current confirmed possessor ────────────────────────────────
+        self.possessor_tid   = None   # track_id
+        self.possessor_team  = None
+        self.possessor_label = "Free Ball"   # display string
+        self.frames_without_contact = 0
+
+        # ── Candidate (building up consecutive frames) ─────────────────
+        self.candidate_tid   = None
+        self.candidate_team  = None
+        self.candidate_name  = None
         self.candidate_count = 0
-        self.last_ball_center = None
 
-        # --- Event Detection (Heuristics) ---
+        # ── Statistics ─────────────────────────────────────────────────
+        self.team_possession_frames = {team_1_name: 0, team_2_name: 0}
+        self.total_possession_frames = 0
+        self.current_possessor = "Free Ball"   # shown in HUD
+
         self.event_counts = {
-            "passes_red": 0,
-            "passes_green": 0,
-            "interceptions_red": 0,
-            "interceptions_green": 0
+            "passes_team1":        0,
+            "passes_team2":        0,
+            "interceptions_team1": 0,
+            "interceptions_team2": 0,
         }
-        
-        # --- UI Alerts ---
+
+        # ── UI alerts ──────────────────────────────────────────────────
         self.current_alert = None
-        self.alert_frames = 0
-        self.alert_color = (255, 255, 255)
+        self.alert_frames  = 0
+        self.alert_color   = (255, 255, 255)
 
-    def update(self, players_data, ball_data):
-        # تقليل عداد إطارات التنبيه لكي يختفي تدريجياً
-        if self.alert_frames > 0:
-            self.alert_frames -= 1
+    # ──────────────────────────────────────────────────────────────────
+    # Helpers
+    # ──────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _feet_zone(bbox):
+        """Return (x1, fy1, x2, y2) — the feet area of a player bbox."""
+        x1, y1, x2, y2 = bbox
+        h = y2 - y1
+        fy1 = y2 - int(h * FEET_ZONE_HEIGHT_RATIO)
+        # Expand width slightly so ball touching the side is also captured
+        w_margin = int((x2 - x1) * FEET_ZONE_WIDTH_EXPANSION)
+        return (x1 - w_margin, fy1, x2 + w_margin, y2)
+
+    @staticmethod
+    def _ball_in_feet_zone(ball_cx, ball_cy, bbox):
+        """True if the ball centre falls inside the player's feet zone."""
+        fx1, fy1, fx2, fy2 = MatchStats._feet_zone(bbox)
+        return fx1 <= ball_cx <= fx2 and fy1 <= ball_cy <= fy2
+
+    def _fire_event(self, from_team, to_team, to_team_name):
+        """Record pass or interception and set HUD alert."""
+        if from_team == to_team:
+            # Same team → PASS
+            key = "passes_team1" if to_team == self.team_1_name else "passes_team2"
+            self.event_counts[key] += 1
+            self.current_alert = "NICE PASS!"
+            self.alert_color   = (0, 220, 0)
+            self.alert_frames  = 45
         else:
-            self.current_alert = None
-
-        if not ball_data or ball_data[0] is None or ball_data[1] == True:
-            self._carry_possession()
-            return
-
-        ball_bbox = ball_data[0]
-        ball_x = (ball_bbox[0] + ball_bbox[2]) / 2
-        ball_y = (ball_bbox[1] + ball_bbox[3]) / 2
-        current_ball_center = (ball_x, ball_y)
-
-        ball_speed = 0
-        if self.last_ball_center is not None:
-            ball_speed = np.sqrt(
-                (ball_x - self.last_ball_center[0])**2 +
-                (ball_y - self.last_ball_center[1])**2
-            )
-        self.last_ball_center = current_ball_center
-
-        min_norm_dist = float('inf')
-        closest_team = None
-        closest_player = "Unknown"
-
-        for player in players_data:
-            p_bbox = player['bbox']
-            team = player['team']
-
-            if team in ("Referee", "Unknown"):
-                continue
-
-            player_height = max(p_bbox[3] - p_bbox[1], 1)
-            feet_x = (p_bbox[0] + p_bbox[2]) / 2
-            feet_y = p_bbox[3]
-
-            raw_dist = np.sqrt((ball_x - feet_x)**2 + (ball_y - feet_y)**2)
-            norm_dist = raw_dist / player_height
-
-            if norm_dist < min_norm_dist:
-                min_norm_dist = norm_dist
-                closest_team = team
-                closest_player = player['name']
-
-        # 🔴 تعديل: الاستحواذ يذهب للاعب الأقرب حتى لو الكورة بعدت شوية أثناء الجري (Dribbling)
-        # 1.5 يعني الكورة في محيط متر ونص لـ 2 متر من اللاعب
-        contact_detected = (min_norm_dist <= 1.5 and closest_team is not None)
-
-        if contact_detected:
-            if self.candidate_team == closest_team and self.candidate_player == closest_player:
-                self.candidate_count += 1
-            else:
-                self.candidate_team = closest_team
-                self.candidate_player = closest_player
-                self.candidate_count = 1
-
-            if self.candidate_count >= self.required_frames:
-                # تحقيق استحواذ جديد مؤكد
-                new_possessor_name = f"{closest_player} ({closest_team})"
-                
-                # --- Event Detection Logic ---
-                # لو الاستحواذ القديم كان مع لاعب مختلف، حدث تغير!
-                if self.last_possessor_name != "Free Ball" and self.last_possessor_name != new_possessor_name:
-                    
-                    if self.last_possessor_team == closest_team:
-                        # نفس الفريق، لاعب مختلف -> تمريرة (Pass)
-                        if closest_team == "Red Team":
-                            self.event_counts["passes_red"] += 1
-                        else:
-                            self.event_counts["passes_green"] += 1
-                            
-                        self.current_alert = "NICE PASS!"
-                        self.alert_color = (0, 255, 0) # أخضر للتمريرات
-                        self.alert_frames = 30 # يظهر لثانية تقريباً
-                        
-                    elif self.last_possessor_team != closest_team:
-                        # فريق مختلف -> اعتراض/قطع (Interception/Tackle)
-                        # 🔥 تعديل احترافي: لا نحسبها اعتراض إلا لو كان الفريق التاني فاقد الكورة من وقت قليل جداً (أقل من ثانية)
-                        # لو الكورة كانت تائهة (Free Ball) لفترة طويلة، ده بيبقى مجرد "استلام كورة تائهة" مش اعتراض
-                        if self.frames_without_contact < 20: 
-                            if closest_team == "Red Team":
-                                self.event_counts["interceptions_red"] += 1
-                                self.alert_color = (0, 0, 255) # أحمر للاعتراض
-                            else:
-                                self.event_counts["interceptions_green"] += 1
-                                self.alert_color = (50, 255, 50) # أخضر للاعتراض
-                                
-                            self.current_alert = "INTERCEPTION!"
-                            self.alert_frames = 35
-                        else:
-                            # لو الكورة بقالها كتير حرة، بنحدث الاستحواذ بس بدون احتساب "اعتراض"
-                            pass
-                # ------------------------------
-
-                self.last_possessor_team = closest_team
-                self.last_possessor_name = new_possessor_name
-                self.frames_without_contact = 0
-
-                self.team_possession_frames[closest_team] += 1
-                self.total_possession_frames += 1
-                self.current_possessor = self.last_possessor_name
-
-        elif ball_speed > self.max_speed:
-            # لو الكورة سرعتها عالية جداً (باصة أو شوتة)، نفقد الاستحواذ مؤقتاً
-            self._carry_possession()
-
-        else:
-            # لو الكورة سرعتها هادية وبعدت عن اللاعب، نفضل سايبينها معاه لفترة أطول (دريبل)
-            self.candidate_count = 0
-            self._carry_possession()
+            # Different team → INTERCEPTION
+            key = "interceptions_team1" if to_team == self.team_1_name else "interceptions_team2"
+            self.event_counts[key] += 1
+            self.current_alert = "INTERCEPTION!"
+            self.alert_color   = (0, 80, 255)
+            self.alert_frames  = 50
 
     def _carry_possession(self):
-        if self.last_possessor_team is not None:
+        """Continue crediting the last possessor for sticky_frames."""
+        if self.possessor_team is not None:
             self.frames_without_contact += 1
-
             if self.frames_without_contact <= self.sticky_frames:
-                self.team_possession_frames[self.last_possessor_team] += 1
+                self.team_possession_frames[self.possessor_team] += 1
                 self.total_possession_frames += 1
-                self.current_possessor = self.last_possessor_name
+                self.current_possessor = self.possessor_label
             else:
                 self.current_possessor = "Free Ball"
         else:
             self.current_possessor = "Free Ball"
 
+    # ──────────────────────────────────────────────────────────────────
+    # Main update — called every frame
+    # ──────────────────────────────────────────────────────────────────
+
+    def update(self, players_data, ball_data):
+        # Countdown alert display
+        if self.alert_frames > 0:
+            self.alert_frames -= 1
+        else:
+            self.current_alert = None
+
+        # ── Ball must be a real detection (not interpolated) ───────────
+        if not ball_data or ball_data[0] is None or ball_data[1] is True:
+            self._carry_possession()
+            return
+
+        bbox_ball = ball_data[0]
+        ball_cx = (bbox_ball[0] + bbox_ball[2]) // 2
+        ball_cy = (bbox_ball[1] + bbox_ball[3]) // 2
+
+        # ── Find which player's feet zone contains the ball ───────────
+        contact_tid   = None
+        contact_team  = None
+        contact_name  = None
+
+        for p in players_data:
+            if p['team'] in ('Referee', 'Unknown'):
+                continue
+            if self._ball_in_feet_zone(ball_cx, ball_cy, p['bbox']):
+                contact_tid  = p['track_id']
+                contact_team = p['team']
+                contact_name = p.get('name') or f"Player #{contact_tid}"
+                break  # Take the first match (closest bboxes rarely overlap)
+
+        # ── Process contact ────────────────────────────────────────────
+        if contact_tid is not None:
+            # Accumulate candidate frames for this track_id
+            if contact_tid == self.candidate_tid:
+                self.candidate_count += 1
+            else:
+                # New candidate — reset counter
+                self.candidate_tid   = contact_tid
+                self.candidate_team  = contact_team
+                self.candidate_name  = contact_name
+                self.candidate_count = 1
+
+            # Enough frames to confirm possession?
+            if self.candidate_count >= self.required_frames:
+                prev_tid  = self.possessor_tid
+                prev_team = self.possessor_team
+
+                # ── Detect pass / interception ────────────────────────
+                if prev_tid is not None and prev_tid != contact_tid:
+                    # Ball physically moved from one player to another
+                    self._fire_event(prev_team, contact_team, contact_name)
+
+                # Confirm new possessor
+                self.possessor_tid   = contact_tid
+                self.possessor_team  = contact_team
+                self.possessor_label = f"{contact_name} ({contact_team})"
+                self.frames_without_contact = 0
+
+                # Make sure team key exists (handles Unknown/Referee edge cases)
+                if contact_team in self.team_possession_frames:
+                    self.team_possession_frames[contact_team] += 1
+                self.total_possession_frames += 1
+                self.current_possessor = self.possessor_label
+
+        else:
+            # No player's feet zone contains the ball
+            self.candidate_count = 0   # Reset candidate streak
+            self._carry_possession()
+
+    # ──────────────────────────────────────────────────────────────────
+    # Stats accessors
+    # ──────────────────────────────────────────────────────────────────
+
     def get_possession_stats(self):
         if self.total_possession_frames == 0:
-            return {"Red Team": 50, "Green Team": 50} 
-        
-        red_pct = (self.team_possession_frames["Red Team"] / self.total_possession_frames) * 100
-        green_pct = (self.team_possession_frames["Green Team"] / self.total_possession_frames) * 100
-        
-        return {"Red Team": int(red_pct), "Green Team": int(green_pct)}
-        
+            return {self.team_1_name: 50, self.team_2_name: 50}
+        t1 = self.team_possession_frames.get(self.team_1_name, 0)
+        t2 = self.team_possession_frames.get(self.team_2_name, 0)
+        total = self.total_possession_frames
+        return {self.team_1_name: int(t1 / total * 100),
+                self.team_2_name: int(t2 / total * 100)}
+
     def get_event_stats(self):
-        return self.event_counts
+        return {
+            "passes_t1": self.event_counts["passes_team1"],
+            "passes_t2": self.event_counts["passes_team2"],
+            "inter_t1":  self.event_counts["interceptions_team1"],
+            "inter_t2":  self.event_counts["interceptions_team2"],
+        }
+
+    # ──────────────────────────────────────────────────────────────────
+    # HUD drawing
+    # ──────────────────────────────────────────────────────────────────
 
     def draw_stats(self, frame):
-        stats = self.get_possession_stats()
-        red_pct = stats["Red Team"]
-        green_pct = stats["Green Team"]
+        stats  = self.get_possession_stats()
+        t1_pct = stats[self.team_1_name]
+        t2_pct = stats[self.team_2_name]
 
-        x, y = 20, 20
-        w, h = 330, 110 
-        
+        x, y, w, h = 20, 20, 340, 110
         overlay = frame.copy()
         cv2.rectangle(overlay, (x, y), (x + w, y + h), (20, 20, 20), -1)
         cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
-        
         cv2.rectangle(frame, (x, y), (x + 6, y + h), (0, 215, 255), -1)
 
-        cv2.putText(frame, "L I V E  M A T C H  S T A T S", (x + 20, y + 25), cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(frame, f"Possession: Red {red_pct}% | Green {green_pct}%", (x + 20, y + 55), cv2.FONT_HERSHEY_DUPLEX, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
-        
+        cv2.putText(frame, "L I V E  M A T C H  S T A T S",
+                    (x + 20, y + 25), cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"Possession: {self.team_1_name} {t1_pct}% | {self.team_2_name} {t2_pct}%",
+                    (x + 20, y + 55), cv2.FONT_HERSHEY_DUPLEX, 0.42, (200, 200, 200), 1, cv2.LINE_AA)
+
         bar_y = y + 68
-        cv2.rectangle(frame, (x + 20, bar_y), (x + w - 20, bar_y + 6), (220, 220, 220), -1) 
-        
-        red_width = int((w - 40) * (red_pct / 100))
-        if red_width > 0:
-            cv2.rectangle(frame, (x + 20, bar_y), (x + 20 + red_width, bar_y + 6), (0, 0, 255), -1) 
-            
-        cv2.putText(frame, f"Ball: {self.current_possessor}", (x + 20, y + 95), cv2.FONT_HERSHEY_DUPLEX, 0.45, (0, 215, 255), 1, cv2.LINE_AA)
-        
-        # رسم البوب أب (Pop-up Alert) في منتصف أسفل الشاشة إذا كان هناك تنبيه نشط
+        cv2.rectangle(frame, (x + 20, bar_y), (x + w - 20, bar_y + 6), (220, 220, 220), -1)
+        t1_w = int((w - 40) * t1_pct / 100)
+        if t1_w > 0:
+            cv2.rectangle(frame, (x + 20, bar_y), (x + 20 + t1_w, bar_y + 6), self.team_1_color, -1)
+
+        cv2.putText(frame, f"Ball: {self.current_possessor}",
+                    (x + 20, y + 95), cv2.FONT_HERSHEY_DUPLEX, 0.42, (0, 215, 255), 1, cv2.LINE_AA)
+
+        # Pop-up alert
         if self.alert_frames > 0 and self.current_alert:
-            # تطبيق تأثير الشفافية (Fade-out)
-            alpha = min(1.0, self.alert_frames / 15.0) 
-            
+            alpha = min(1.0, self.alert_frames / 15.0)
             alert_overlay = frame.copy()
-            # خلفية داكنة خفيفة وراء الكلمة
             fh, fw = frame.shape[:2]
-            text_size = cv2.getTextSize(self.current_alert, cv2.FONT_HERSHEY_DUPLEX, 1.2, 2)[0]
-            box_x1 = int((fw - text_size[0]) / 2) - 20
-            box_y1 = fh - 100 - text_size[1] - 10
-            box_x2 = box_x1 + text_size[0] + 40
-            box_y2 = fh - 100 + 10
-            
-            cv2.rectangle(alert_overlay, (box_x1, box_y1), (box_x2, box_y2), (0, 0, 0), -1)
-            cv2.addWeighted(alert_overlay, alpha * 0.6, frame, 1 - (alpha * 0.6), 0, frame)
-            
-            # رسم الكلمة بلون مميز
-            cv2.putText(frame, self.current_alert, (box_x1 + 20, fh - 100), cv2.FONT_HERSHEY_DUPLEX, 1.2, self.alert_color, 2, cv2.LINE_AA)
+            text_size = cv2.getTextSize(self.current_alert, cv2.FONT_HERSHEY_DUPLEX, 1.1, 2)[0]
+            bx1 = int((fw - text_size[0]) / 2) - 20
+            by1 = fh - 110 - text_size[1] - 10
+            bx2 = bx1 + text_size[0] + 40
+            by2 = fh - 110 + 10
+            cv2.rectangle(alert_overlay, (bx1, by1), (bx2, by2), (0, 0, 0), -1)
+            cv2.addWeighted(alert_overlay, alpha * 0.65, frame, 1 - alpha * 0.65, 0, frame)
+            cv2.putText(frame, self.current_alert,
+                        (bx1 + 20, fh - 110), cv2.FONT_HERSHEY_DUPLEX, 1.1,
+                        self.alert_color, 2, cv2.LINE_AA)
 
         return frame

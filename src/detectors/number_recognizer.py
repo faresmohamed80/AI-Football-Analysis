@@ -1,5 +1,5 @@
 from ultralytics import YOLO
-import cv2
+from src.config import NUMBER_CONFIDENCE
 
 class NumberRecognizer:
     def __init__(self, weights_path):
@@ -10,20 +10,19 @@ class NumberRecognizer:
 
     def recognize(self, frame, bbox):
         """
-        يستقبل الفريم وإحداثيات اللاعب، ويقص الصورة لمعرفة الرقم الحقيقي
+        Receives the frame and player coordinates, crops the image to find the jersey number.
         """
         x1, y1, x2, y2 = bbox
         
-        # قص صورة اللاعب من الفريم الكامل
+        # Crop player image from full frame
         player_crop = frame[y1:y2, x1:x2]
         
-        # التأكد من أن القص تم بنجاح وأن الصورة ليست فارغة
+        # Check if crop was successful and image is not empty
         if player_crop.size == 0:
             return None
             
-        # 1. تمرير صورة اللاعب (المقصوصة) لموديل الأرقام
-        # يمكنك تقليل الـ conf إذا كان الموديل لا يكتشف الأرقام بسهولة
-        results = self.model(player_crop, conf=0.4, verbose=False)
+        # 1. Pass player crop to number model
+        results = self.model(player_crop, conf=NUMBER_CONFIDENCE, verbose=False)
         
         digits = []
         for result in results:
