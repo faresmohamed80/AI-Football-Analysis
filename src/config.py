@@ -13,14 +13,16 @@ BALL_DETECTOR_WEIGHTS     = os.path.join(BASE_DIR, "weights", "football ball det
 NUMBER_RECOGNIZER_WEIGHTS = os.path.join(BASE_DIR, "weights", "jersey_recognition.pt")
 STADIUM_SEGMENTER_WEIGHTS = os.path.join(BASE_DIR, "weights", "Studiam_seg.pt")
 FIELD_DETECTOR_WEIGHTS    = os.path.join(BASE_DIR, "weights", "football-field-detection-15", "weights", "best.pt")
+ACTION_RECOGNIZER_WEIGHTS = os.path.join(BASE_DIR, "weights", "action.zip")
+
 
 # ─────────────────────────────────────────────────────────
 # 3. Confidence Thresholds (Individual for each model)
 # ─────────────────────────────────────────────────────────
-PLAYER_CONFIDENCE = 0.3
-BALL_CONFIDENCE   = 0.7
+PLAYER_CONFIDENCE = 0.15
+BALL_CONFIDENCE   = 0.75
 NUMBER_CONFIDENCE = 0.2
-STADIUM_CONFIDENCE = 0.2
+STADIUM_CONFIDENCE = 0.4
 FIELD_DETECTOR_CONFIDENCE = 0.5   # Keypoint confidence for homography
 
 # Ball class ID: 0 = custom model (ball only), 32 = COCO pre-trained model
@@ -84,10 +86,10 @@ TEAM_1_HSV = [
     {"lower": [0, 0, 0],      "upper": [180, 255, 50]}   # Black GK
 ]
 
-# Team 2 (Light Green + Orange Goalkeeper)
+# Team 2 (Blue + Blue GK)
 TEAM_2_HSV = [
-    {"lower": [35, 50, 50],   "upper": [85, 255, 255]},  # Light Green
-    {"lower": [10, 100, 100], "upper": [25, 255, 255]}   # Orange GK
+    {"lower": [100, 50, 50],  "upper": [130, 255, 255]},  # Blue
+    {"lower": [100, 30, 30],  "upper": [130, 255, 200]}   # Dark Blue GK
 ]
 
 # Referee (Black)
@@ -97,11 +99,12 @@ REFEREE_HSV = [
 
 # Team Names
 TEAM_1_NAME = "White Team"
-TEAM_2_NAME = "Green Team"
+TEAM_2_NAME = "Blue Team"
 
 # Team Display Colors (BGR)
-TEAM_1_DISPLAY_COLOR = (255, 255, 255) # White
-TEAM_2_DISPLAY_COLOR = (144, 238, 144) # Light Green
+TEAM_1_DISPLAY_COLOR = (255, 255, 255)  # White
+TEAM_2_DISPLAY_COLOR = (255, 100, 0)    # Blue (BGR)
+
 REFEREE_DISPLAY_COLOR = (0, 0, 0)     # Black
 
 # ─────────────────────────────────────────────────────────
@@ -114,8 +117,8 @@ MIN_FRAMES_FOR_HEATMAP = 30
 # ─────────────────────────────────────────────────────────
 # 10. API & Database Settings
 # ─────────────────────────────────────────────────────────
-API_BASE_URL = "http://98.91.219.64:8080/api/v1"
+API_BASE_URL = "http://107.21.186.172:8080/api/v1"
 SUPABASE_URL = "https://gsvowvzdxphlguclawur.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdzdm93dnpkeHBobGd1Y2xhd3VyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MzU2NDgsImV4cCI6MjA4ODMxMTY0OH0.jORXG6_6LjDP07EAhJvYb9G10AKRuKaDkCjy0SfhQe8"
 SUPABASE_BUCKET = "heatmaps"  # Assuming heatmaps are uploaded here
-MATCH_ID = 9  # Change this to the ID of the match to analyze
+MATCH_ID = 10  # Change this to the ID of the match to analyze

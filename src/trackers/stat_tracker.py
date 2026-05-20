@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from collections import Counter, defaultdict
 from src.config import (
     STICKY_FRAMES,
     REQUIRED_POSSESSION_FRAMES,
@@ -69,6 +70,25 @@ class MatchStats:
         self.alert_frames  = 0
         self.alert_color   = (255, 255, 255)
 
+        # ── Action tracking per player & team ──────────────────────────
+        self.player_actions: dict = defaultdict(Counter)
+        self.player_names:   dict = {}
+        self.player_teams:   dict = {}
+        self.team_actions:   dict = {team_1_name: Counter(), team_2_name: Counter()}
+        self.current_action:       str   = ""
+        self.current_action_conf:  float = 0.0
+        self.action_display_frames: int  = 0
+
+        # ── Rule-based tracking states ─────────────────────────────────
+        self.frame_counter = 0
+        self.last_possessor_tid = None
+        self.last_possessor_name = None
+        self.last_possessor_team = None
+        self.kick_point = None  # (px, py) in meters
+        self.free_ball_positions = []  # list of (px, py, frame)
+        self.free_ball_speeds = []     # list of speeds in m/s
+        self.player_possession_frames = defaultdict(int)
+
     # ──────────────────────────────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────────────────────────────
@@ -89,22 +109,107 @@ class MatchStats:
         fx1, fy1, fx2, fy2 = MatchStats._feet_zone(bbox)
         return fx1 <= ball_cx <= fx2 and fy1 <= ball_cy <= fy2
 
-    def _fire_event(self, from_team, to_team, to_team_name):
-        """Record pass or interception and set HUD alert."""
+    def _to_pitch_coords(self, x, y, matrix, dx, dy, radar_w=400, radar_h=240):
+        if matrix is None:
+            # Fallback mapping (image relative coordinates to pitch size)
+            return float((x / 1920.0) * 105.0), float((y / 1080.0) * 68.0)
+        pt = np.array([[[x, y]]], dtype=np.float32)
+        transformed = cv2.perspectiveTransform(pt, matrix)
+        rx = transformed[0][0][0] + dx
+        ry = transformed[0][0][1] + dy
+        px = (rx / float(radar_w)) * 105.0
+        py = (ry / float(radar_h)) * 68.0
+        return float(np.clip(px, 0.0, 105.0)), float(np.clip(py, 0.0, 68.0))
+
+    def _classify_and_record_action(self, from_tid, from_team, from_name, to_tid, to_team, to_name, curr_x, curr_y):
+        """Classifies the possession transition between two players using rules."""
+        kx, ky = self.kick_point if self.kick_point is not None else (curr_x, curr_y)
+        dist = np.sqrt((curr_x - kx)**2 + (curr_y - ky)**2)
+        max_speed = max(self.free_ball_speeds) if self.free_ball_speeds else 0.0
+        if max_speed == 0.0:
+            max_speed = dist * 25.0
+
+        action = "PASS"
+        confidence = 0.90
+        is_team1 = (from_team == self.team_1_name)
+
+        # 1. SHOT: high speed towards opponent's goal
+        is_shot_trajectory = False
+        if is_team1:
+            if curr_x > kx and kx > 50.0:
+                is_shot_trajectory = True
+        else:
+            if curr_x < kx and kx < 55.0:
+                is_shot_trajectory = True
+
+        if is_shot_trajectory and max_speed > 13.0:
+            action = "SHOT"
+            confidence = min(0.98, 0.70 + (max_speed - 13.0) * 0.02)
+        
+        # 2. CLEARANCE: high speed from defensive area
+        elif max_speed > 12.0 and dist > 20.0:
+            is_defensive_zone = (kx < 35.0) if is_team1 else (kx > 70.0)
+            if is_defensive_zone:
+                action = "CLEARANCE"
+                confidence = 0.85
+
+        # 3. CROSS: from wide area to opponent's penalty box
+        elif (ky < 16.0 or ky > 52.0) and dist > 15.0:
+            in_opponent_box = False
+            if is_team1:
+                if curr_x > 85.0 and 12.0 < curr_y < 56.0:
+                    in_opponent_box = True
+            else:
+                if curr_x < 20.0 and 12.0 < curr_y < 56.0:
+                    in_opponent_box = True
+            if in_opponent_box:
+                action = "CROSS"
+                confidence = 0.88
+
+        # 4. HIGH_PASS: long pass
+        elif dist > 22.0:
+            action = "HIGH_PASS"
+            confidence = 0.85
+
         if from_team == to_team:
-            # Same team → PASS
+            # Same team -> PASS/SHOT/CROSS/HIGH_PASS/CLEARANCE
+            self.record_action(from_tid, from_team, action, confidence, from_name)
             key = "passes_team1" if to_team == self.team_1_name else "passes_team2"
             self.event_counts[key] += 1
-            self.current_alert = "NICE PASS!"
-            self.alert_color   = (0, 220, 0)
-            self.alert_frames  = 45
+            if action == "SHOT":
+                self.current_alert = "WHAT A SHOT!"
+                self.alert_color   = (0, 0, 255)
+                self.alert_frames  = 60
+            elif action == "CROSS":
+                self.current_alert = "BEAUTIFUL CROSS!"
+                self.alert_color   = (255, 150, 0)
+                self.alert_frames  = 45
+            elif action == "HIGH_PASS":
+                self.current_alert = "LONG PASS!"
+                self.alert_color   = (200, 200, 0)
+                self.alert_frames  = 45
+            else:
+                self.current_alert = "NICE PASS!"
+                self.alert_color   = (0, 220, 0)
+                self.alert_frames  = 45
         else:
-            # Different team → INTERCEPTION
-            key = "interceptions_team1" if to_team == self.team_1_name else "interceptions_team2"
-            self.event_counts[key] += 1
-            self.current_alert = "INTERCEPTION!"
-            self.alert_color   = (0, 80, 255)
-            self.alert_frames  = 50
+            # Different team -> INTERCEPTION (or TACKLE by intercepting player)
+            if action == "SHOT":
+                self.record_action(from_tid, from_team, "SHOT", confidence, from_name)
+                self.current_alert = "SHOT BLOCKED/SAVED!"
+                self.alert_color   = (0, 100, 255)
+                self.alert_frames  = 50
+            else:
+                self.record_action(to_tid, to_team, "PLAYER_SUCCESSFUL_TACKLE", 0.90, to_name)
+                key = "interceptions_team1" if to_team == self.team_1_name else "interceptions_team2"
+                self.event_counts[key] += 1
+                self.current_alert = "INTERCEPTION!"
+                self.alert_color   = (0, 80, 255)
+                self.alert_frames  = 50
+
+    def _fire_event(self, from_team, to_team, to_team_name):
+        """Deprecated: superseded by _classify_and_record_action."""
+        pass
 
     def _carry_possession(self):
         """Continue crediting the last possessor for sticky_frames."""
@@ -123,21 +228,30 @@ class MatchStats:
     # Main update — called every frame
     # ──────────────────────────────────────────────────────────────────
 
-    def update(self, players_data, ball_data):
+    def update(self, players_data, ball_data, matrix=None, dx=0, dy=0):
+        self.frame_counter += 1
+
         # Countdown alert display
         if self.alert_frames > 0:
             self.alert_frames -= 1
         else:
             self.current_alert = None
 
+        if self.action_display_frames > 0:
+            self.action_display_frames -= 1
+
         # ── Ball must be a real detection (not interpolated) ───────────
         if not ball_data or ball_data[0] is None or ball_data[1] is True:
             self._carry_possession()
+            if self.possessor_tid is not None:
+                p_name = self.player_names.get(self.possessor_tid, f"Player #{self.possessor_tid}")
+                self.player_possession_frames[p_name] += 1
             return
 
         bbox_ball = ball_data[0]
         ball_cx = (bbox_ball[0] + bbox_ball[2]) // 2
         ball_cy = (bbox_ball[1] + bbox_ball[3]) // 2
+        ball_px, ball_py = self._to_pitch_coords(ball_cx, ball_cy, matrix, dx, dy)
 
         # ── Find which player's feet zone contains the ball ───────────
         contact_tid   = None
@@ -151,7 +265,9 @@ class MatchStats:
                 contact_tid  = p['track_id']
                 contact_team = p['team']
                 contact_name = p.get('name') or f"Player #{contact_tid}"
-                break  # Take the first match (closest bboxes rarely overlap)
+                self.player_names[contact_tid] = contact_name
+                self.player_teams[contact_tid] = contact_team
+                break
 
         # ── Process contact ────────────────────────────────────────────
         if contact_tid is not None:
@@ -169,11 +285,7 @@ class MatchStats:
             if self.candidate_count >= self.required_frames:
                 prev_tid  = self.possessor_tid
                 prev_team = self.possessor_team
-
-                # ── Detect pass / interception ────────────────────────
-                if prev_tid is not None and prev_tid != contact_tid:
-                    # Ball physically moved from one player to another
-                    self._fire_event(prev_team, contact_team, contact_name)
+                prev_name = self.player_names.get(prev_tid) if prev_tid is not None else None
 
                 # Confirm new possessor
                 self.possessor_tid   = contact_tid
@@ -186,11 +298,41 @@ class MatchStats:
                     self.team_possession_frames[contact_team] += 1
                 self.total_possession_frames += 1
                 self.current_possessor = self.possessor_label
+                self.player_possession_frames[contact_name] += 1
+
+                # ── Detect pass / interception / shot / clearance ────────────────────────
+                if prev_tid is not None and prev_tid != contact_tid:
+                    self._classify_and_record_action(
+                        prev_tid, prev_team, prev_name,
+                        contact_tid, contact_team, contact_name,
+                        ball_px, ball_py
+                    )
+
+                self.last_possessor_tid = contact_tid
+                self.last_possessor_name = contact_name
+                self.last_possessor_team = contact_team
+                self.kick_point = (ball_px, ball_py)
+                self.free_ball_positions = []
+                self.free_ball_speeds = []
 
         else:
             # No player's feet zone contains the ball
             self.candidate_count = 0   # Reset candidate streak
             self._carry_possession()
+            if self.possessor_tid is not None:
+                p_name = self.player_names.get(self.possessor_tid, f"Player #{self.possessor_tid}")
+                self.player_possession_frames[p_name] += 1
+
+            if self.last_possessor_tid is not None:
+                self.free_ball_positions.append((ball_px, ball_py, self.frame_counter))
+                if len(self.free_ball_positions) >= 2:
+                    x1, y1, f1 = self.free_ball_positions[-2]
+                    x2, y2, f2 = self.free_ball_positions[-1]
+                    dt = (f2 - f1) / 25.0
+                    if dt > 0:
+                        dist = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+                        speed = dist / dt
+                        self.free_ball_speeds.append(speed)
 
     # ──────────────────────────────────────────────────────────────────
     # Stats accessors
@@ -204,6 +346,36 @@ class MatchStats:
         total = self.total_possession_frames
         return {self.team_1_name: int(t1 / total * 100),
                 self.team_2_name: int(t2 / total * 100)}
+
+    def record_action(self, track_id: int, team: str, action: str,
+                       confidence: float, player_name: str = ""):
+        """Record a detected action for a player and their team."""
+        self.player_actions[track_id][action] += 1
+        self.player_names[track_id] = player_name or f"Player #{track_id}"
+        self.player_teams[track_id] = team
+        if team in self.team_actions:
+            self.team_actions[team][action] += 1
+        # Show on HUD for 60 frames
+        self.current_action       = action
+        self.current_action_conf  = confidence
+        self.action_display_frames = 60
+
+    def get_player_action_stats(self) -> list:
+        """Returns list of dicts with per-player action counts."""
+        result = []
+        for tid, counter in self.player_actions.items():
+            result.append({
+                "track_id":    int(tid),
+                "player_name": self.player_names.get(tid, f"Player #{tid}"),
+                "team":        self.player_teams.get(tid, "Unknown"),
+                "actions":     dict(counter),
+                "total_actions": sum(counter.values()),
+            })
+        return sorted(result, key=lambda x: x["total_actions"], reverse=True)
+
+    def get_team_action_stats(self) -> dict:
+        """Returns dict of team → action counts."""
+        return {team: dict(counter) for team, counter in self.team_actions.items()}
 
     def get_event_stats(self):
         return {
@@ -222,11 +394,12 @@ class MatchStats:
         t1_pct = stats[self.team_1_name]
         t2_pct = stats[self.team_2_name]
 
-        x, y, w, h = 20, 20, 340, 110
+        x, y, w, h = 20, 20, 340, 130
         overlay = frame.copy()
         cv2.rectangle(overlay, (x, y), (x + w, y + h), (20, 20, 20), -1)
         cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
         cv2.rectangle(frame, (x, y), (x + 6, y + h), (0, 215, 255), -1)
+
 
         cv2.putText(frame, "L I V E  M A T C H  S T A T S",
                     (x + 20, y + 25), cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
@@ -241,6 +414,13 @@ class MatchStats:
 
         cv2.putText(frame, f"Ball: {self.current_possessor}",
                     (x + 20, y + 95), cv2.FONT_HERSHEY_DUPLEX, 0.42, (0, 215, 255), 1, cv2.LINE_AA)
+
+        # Action Display
+        if self.action_display_frames > 0 and self.current_action:
+            action_text = f"Action: {self.current_action} ({self.current_action_conf:.2f})"
+            cv2.putText(frame, action_text,
+                        (x + 20, y + 115), cv2.FONT_HERSHEY_DUPLEX, 0.42, (255, 100, 255), 1, cv2.LINE_AA)
+
 
         # Pop-up alert
         if self.alert_frames > 0 and self.current_alert:

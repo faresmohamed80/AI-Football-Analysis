@@ -148,23 +148,26 @@ class APIClient:
             print(f"Warning: Failed to upload heatmap for {player_name}: {res.text}")
             return None
 
-    def submit_ai_results(self, match_id, final_stats, event_stats, player_stats, heatmap_urls):
+    def submit_ai_results(self, match_id, final_stats, event_stats, player_stats,
+                          heatmap_urls, team_stats=None):
         """Submits the final JSON back to FastAPI."""
         print(f"Submitting final AI analysis for match {match_id}...")
-        
+
         payload = {
             "match_id": match_id,
             "team_stats": {
-                "possession": final_stats,
-                "passes_red": event_stats.get("passes_t1", 0),
-                "passes_green": event_stats.get("passes_t2", 0),
-                "interceptions_red": event_stats.get("inter_t1", 0),
-                "interceptions_green": event_stats.get("inter_t2", 0)
+                "possession":           final_stats,
+                "passes_red":           event_stats.get("passes_t1", 0),
+                "passes_green":         event_stats.get("passes_t2", 0),
+                "interceptions_red":    event_stats.get("inter_t1", 0),
+                "interceptions_green":  event_stats.get("inter_t2", 0),
+                # Full per-team breakdown (distance, speed, actions, etc.)
+                "team_breakdown":       team_stats or {},
             },
             "player_stats": player_stats,
-            "heatmap_urls": heatmap_urls
+            "heatmap_urls": heatmap_urls,
         }
-        
+
         res = requests.post(f"{self.api_base}/ai/analyze-match/{match_id}", json=payload)
         if res.ok:
             print("Successfully submitted AI analysis to Database!")

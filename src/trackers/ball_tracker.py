@@ -1,5 +1,6 @@
 from ultralytics import YOLO
 import numpy as np
+from collections import defaultdict
 from src.config import BALL_CONFIDENCE, BALL_CLASS_ID
 
 class BallTracker:
@@ -12,8 +13,46 @@ class BallTracker:
         self.missing_count = 0
         self.last_bbox = None
         self.velocity = (0, 0)
+        
+        # Shoe/boot detection history per player track ID
+        self.boot_history = defaultdict(list)
 
-    def track(self, frame):
+    def _is_boot(self, ball_bbox, players_data):
+        bx1, by1, bx2, by2 = ball_bbox
+        bcx = (bx1 + bx2) / 2
+        bcy = (by1 + by2) / 2
+        
+        for p in players_data:
+            px1, py1, px2, py2 = p['bbox']
+            p_w = px2 - px1
+            p_h = py2 - py1
+            
+            # Check if ball is inside player bbox
+            if px1 <= bcx <= px2 and py1 <= bcy <= py2:
+                # Feet region is the bottom 15% of player height
+                feet_top = py2 - int(p_h * 0.15)
+                if bcy >= feet_top:
+                    # Calculate relative offset to bottom center
+                    p_bottom_cx = (px1 + px2) / 2
+                    p_bottom_cy = py2
+                    rel_x = bcx - p_bottom_cx
+                    rel_y = bcy - p_bottom_cy
+                    
+                    tid = p['track_id']
+                    history = self.boot_history[tid]
+                    history.append((rel_x, rel_y))
+                    if len(history) > 10:
+                        history.pop(0)
+                        
+                    if len(history) >= 5:
+                        vars_x = np.var([pt[0] for pt in history])
+                        vars_y = np.var([pt[1] for pt in history])
+                        # If variance is extremely low, it's a boot
+                        if vars_x < 2.0 and vars_y < 2.0:
+                            return True
+        return False
+
+    def track(self, frame, players_data=None):
         results = self.model(frame, conf=BALL_CONFIDENCE, verbose=False)
         
         best_box = None
@@ -28,9 +67,15 @@ class BallTracker:
                     continue
                 
                 conf = float(box.conf[0])
+                bbox = box.xyxy[0].cpu().numpy()
+                
+                # Check if this box is a player's boot
+                if players_data is not None and self._is_boot(bbox, players_data):
+                    continue
+                
                 if conf > max_conf:
                     max_conf = conf
-                    best_box = box.xyxy[0].cpu().numpy()
+                    best_box = bbox
 
         # Ball detected successfully
         if best_box is not None:

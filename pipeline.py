@@ -35,14 +35,26 @@ def main():
     
     # --- API Integration: Fetch Match Data ---
     api = APIClient()
-    match_data = api.fetch_match_data(MATCH_ID)
-    
-    home_team = match_data["home_team"]
-    away_team = match_data["away_team"]
-    player_db = match_data["players_db"]
+    try:
+        match_data = api.fetch_match_data(MATCH_ID)
+        home_team  = match_data["home_team"]
+        away_team  = match_data["away_team"]
+        player_db  = match_data["players_db"]
+    except Exception as e:
+        print(f"⚠️  API unavailable ({e.__class__.__name__}). Running with fallback defaults.")
+        home_team = {"team_name": TEAM_1_NAME,
+                     "primary_tshirt_colors": None,
+                     "secondary_tshirt_colors": None,
+                     "goalkeeper_tshirt_colors": None}
+        away_team = {"team_name": TEAM_2_NAME,
+                     "primary_tshirt_colors": None,
+                     "secondary_tshirt_colors": None,
+                     "goalkeeper_tshirt_colors": None}
+        player_db = {}
 
     team_1_name = home_team.get("team_name") or TEAM_1_NAME
     team_2_name = away_team.get("team_name") or TEAM_2_NAME
+
     
     # Fetch ALL color ranges from DB (primary + secondary + GK)
     home_hsv_list = [
@@ -83,6 +95,9 @@ def main():
         team_1_name=team_1_name, team_2_name=team_2_name,
         team_1_color=team_1_bgr, team_2_color=team_2_bgr
     )
+
+    # 3. Action Recognition configuration
+    # Note: Deep learning Action Recognition (R3D-18) has been replaced by physical rule-based logic in MatchStats.
     
     # 🔴 Loading stadium segmentation model for radar
     pitch_segmenter = YOLO(STADIUM_SEGMENTER_WEIGHTS)
@@ -151,6 +166,7 @@ def main():
     print(f"🎞️ Analysis will process {total_frames_to_process} frames (approx {duration_sec}s).")
 
     track_id_to_name = {}
+    track_id_to_team = {}   # track_id → team name (for aggregating team stats)
 
     # 5. Main loop for processing frame by frame
     while True:
@@ -213,11 +229,14 @@ def main():
                 'team': team_name,
                 'color': box_color
             })
+            if team_name not in ('Referee', 'Unknown'):
+                track_id_to_team[track_id] = team_name
+
 
         # ---------------------------------------------------------
         # ب. معالجة الكرة ⚽
         # ---------------------------------------------------------
-        ball_data = ball_tracker.track(frame)
+        ball_data = ball_tracker.track(frame, players_data)
 
         # Update ball trail with current real position (skip interpolated)
         if ball_data is not None:
@@ -231,7 +250,7 @@ def main():
         # ---------------------------------------------------------
         # ج. حساب الإحصائيات (الاستحواذ + السرعة + الهيت ماب) 📊
         # ---------------------------------------------------------
-        stats_tracker.update(players_data, ball_data)
+        stats_tracker.update(players_data, ball_data, radar_seg.matrix, radar_seg.dx, radar_seg.dy)
 
         # تحديث تتبع السرعة والمسافة
         tracks_for_speed = {}
@@ -243,9 +262,8 @@ def main():
             feet_x = (bx1 + bx2) / 2
             feet_y = by2
             tracks_for_speed[tid] = (feet_x, feet_y)
-            # إحداثيات مُطبَّعة (0-1) للـ heatmap
-            label = p.get('name') or f"#{tid}"
-            heatmap_positions[label] = (feet_x / width, feet_y / height)
+            # Store by track_id (tid) to allow proper merging at the end of the video
+            heatmap_positions[tid] = (feet_x / width, feet_y / height)
 
         total_dist, speeds = speed_tracker.update(tracks_for_speed)
         heatmap_tracker.update(heatmap_positions)
@@ -268,20 +286,29 @@ def main():
 
         # 4. رسم الرادار
         annotated_frame = radar_seg.draw_radar(
-            annotated_frame, players_data, ball_data, 
-            position="bottom-left", title="Pitch Radar"
+            annotated_frame, players_data, ball_data,
+            position="bottom-left", title="Pitch Radar",
+            team_1_color=team_1_bgr, team_2_color=team_2_bgr,
+            team_1_name=team_1_name, team_2_name=team_2_name
         )
 
-        # 4. عرض الفريم (بعد ما جمعنا عليه كل حاجة)
-
-        # ---------------------------------------------------------
-        # هـ. حفظ الفريم
-        # ---------------------------------------------------------
+        # 5. حفظ الفريم
         out.write(annotated_frame)
 
     # 6. إغلاق وتحرير الملفات
     cap.release()
     out.release()
+
+    # Merge heatmap positions by player name to prevent duplicates
+    from collections import defaultdict
+    merged_heatmap_positions = defaultdict(list)
+    for tid, positions in heatmap_tracker.player_positions.items():
+        p_name = track_id_to_name.get(tid, f"Player #{tid}")
+        if p_name in ["Identifying...", "Unknown"]:
+            p_name = f"Player #{tid}"
+        merged_heatmap_positions[p_name].extend(positions)
+    
+    heatmap_tracker.player_positions = merged_heatmap_positions
 
     # 7. Generate Heatmap images for each player
     heatmap_paths = heatmap_tracker.generate_heatmaps(min_frames=MIN_FRAMES_FOR_HEATMAP)
@@ -301,7 +328,7 @@ def main():
     print(f"🔹 {team_1_name} Interceptions: {event_stats['inter_t1']}")
     print(f"🔸 {team_2_name} Interceptions: {event_stats['inter_t2']}")
     
-    print(f"\nVideo saved to: {OUTPUT_VIDEO_PATH}")
+    print(f"Video saved to: {OUTPUT_VIDEO_PATH}")
 
     # --- API Integration: Upload Heatmaps & Submit Results ---
     heatmap_urls = {}
@@ -311,27 +338,111 @@ def main():
             if url:
                 heatmap_urls[player_name] = url
                 
-    # Prepare player stats
-    player_stats_payload = []
+    # Prepare player stats (speed + distance + actions)
+    # Group and merge statistics by player name to prevent duplicate entries
+    from collections import Counter
+    merged_player_stats = {}
     
-    for tid, t_dist in speed_tracker.total_distance.items():
+    # 1. First, map track_ids to their final names
+    final_id_to_name = {}
+    for tid in speed_tracker.total_distance.keys():
         p_name = track_id_to_name.get(tid, f"Player #{tid}")
-        t_speed = speed_tracker.top_speeds.get(tid, 0)
+        final_id_to_name[tid] = p_name
         
-        player_stats_payload.append({
-            "track_id": int(tid),
-            "player_name": p_name,
-            "total_distance": float(t_dist),
-            "top_speed": float(t_speed)
-        })
+    for tid in stats_tracker.player_actions.keys():
+        if tid not in final_id_to_name:
+            p_name = track_id_to_name.get(tid, f"Player #{tid}")
+            final_id_to_name[tid] = p_name
+
+    # 2. Iterate and merge
+    for tid, t_name in final_id_to_name.items():
+        t_team = track_id_to_team.get(tid, "Unknown")
+        t_dist = speed_tracker.total_distance.get(tid, 0.0)
+        t_speed = speed_tracker.top_speeds.get(tid, 0.0)
+        tid_actions = stats_tracker.player_actions.get(tid, Counter())
+        
+        if t_name in ["Identifying...", "Unknown"]:
+            t_name = f"Player #{tid}"
+            
+        if t_name not in merged_player_stats:
+            merged_player_stats[t_name] = {
+                "track_id": int(tid),
+                "player_name": t_name,
+                "team": t_team,
+                "total_distance": float(t_dist),
+                "top_speed": float(t_speed),
+                "actions": Counter(tid_actions)
+            }
+        else:
+            entry = merged_player_stats[t_name]
+            if entry["team"] == "Unknown" and t_team != "Unknown":
+                entry["team"] = t_team
+            entry["total_distance"] += float(t_dist)
+            entry["top_speed"] = max(entry["top_speed"], float(t_speed))
+            entry["actions"].update(tid_actions)
+
+    player_stats_payload = []
+    for p_name, data in merged_player_stats.items():
+        data["actions"] = dict(data["actions"])
+        player_stats_payload.append(data)
+
+    # ── Comprehensive Team Stats ───────────────────────────────────────
+    possession_stats  = stats_tracker.get_possession_stats()
+    team_action_stats = stats_tracker.get_team_action_stats()
+
+    team_stats_payload = {}
+    for tname in [team_1_name, team_2_name]:
+        is_t1 = (tname == team_1_name)
+
+        # Get merged players belonging to this team
+        team_players = [p for p in player_stats_payload if p["team"] == tname]
+        team_dists   = [p["total_distance"] for p in team_players]
+        team_speeds  = [p["top_speed"] for p in team_players]
+
+        team_stats_payload[tname] = {
+            # Possession
+            "possession_pct":    possession_stats.get(tname, 0),
+            # Distance
+            "total_distance_km": round(sum(team_dists) / 1000, 2),
+            "avg_distance_km":   round((sum(team_dists) / len(team_dists) / 1000) if team_dists else 0, 2),
+            # Speed
+            "top_speed_kmh":     round(max(team_speeds) if team_speeds else 0, 1),
+            "avg_top_speed_kmh": round((sum(team_speeds) / len(team_speeds)) if team_speeds else 0, 1),
+            # Traditional events
+            "passes":            event_stats["passes_t1" if is_t1 else "passes_t2"],
+            "interceptions":     event_stats["inter_t1"  if is_t1 else "inter_t2"],
+            # Action model events (SHOT, HEADER, CROSS, etc.)
+            **{f"action_{k.lower()}": v
+               for k, v in team_action_stats.get(tname, {}).items()},
+        }
+
+    # ── Print full summary ─────────────────────────────────────────────
+    print("\n" + "="*58)
+    print("  FINAL MATCH STATISTICS")
+    print("="*58)
+    for tname, stats in team_stats_payload.items():
+        print(f"\n  {tname}:")
+        for k, v in stats.items():
+            print(f"    {k:<28} {v}")
+
+    print("\n  Player Actions (top 10):")
+    player_action_stats = sorted(
+        player_stats_payload, 
+        key=lambda x: sum(x["actions"].values()), 
+        reverse=True
+    )
+    for p in player_action_stats[:10]:
+        print(f"    {p['player_name']:<25} ({p['team']}) {p['actions']}")
 
     api.submit_ai_results(
         match_id=MATCH_ID,
         final_stats=final_stats,
         event_stats=event_stats,
         player_stats=player_stats_payload,
-        heatmap_urls=heatmap_urls
+        heatmap_urls=heatmap_urls,
+        team_stats=team_stats_payload
     )
 
 if __name__ == "__main__":
     main()
+
