@@ -336,7 +336,7 @@ def main():
         p_name = track_id_to_name.get(tid)
         # Match naming convention in player_stats_payload for unidentified players
         if not p_name or p_name in ["Identifying...", "Unknown"]:
-            p_name = f"Player #{tid}"
+            p_name = f"Player (Track #{tid})"
         merged_heatmap_positions[p_name].extend(positions)
 
     heatmap_tracker.player_positions = merged_heatmap_positions
@@ -356,12 +356,12 @@ def main():
     # 1. First, map track_ids to their final names
     final_id_to_name = {}
     for tid in speed_tracker.total_distance.keys():
-        p_name = track_id_to_name.get(tid, f"Player #{tid}")
+        p_name = track_id_to_name.get(tid, f"Player (Track #{tid})")
         final_id_to_name[tid] = p_name
         
     for tid in stats_tracker.player_actions.keys():
         if tid not in final_id_to_name:
-            p_name = track_id_to_name.get(tid, f"Player #{tid}")
+            p_name = track_id_to_name.get(tid, f"Player (Track #{tid})")
             final_id_to_name[tid] = p_name
 
     # 2. Iterate and merge
@@ -372,7 +372,7 @@ def main():
         tid_actions = stats_tracker.player_actions.get(tid, Counter())
         
         if t_name in ["Identifying...", "Unknown"]:
-            t_name = f"Player #{tid}"
+            t_name = f"Player (Track #{tid})"
             
         if t_name not in merged_player_stats:
             merged_player_stats[t_name] = {
