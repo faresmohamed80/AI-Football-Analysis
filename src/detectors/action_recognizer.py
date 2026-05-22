@@ -88,7 +88,7 @@ class ActionRecognizer:
     def _load_model(self, weights_path: str):
         import os
         if not os.path.isfile(weights_path):
-            print(f"⚠️  [ActionRecognizer] Weights file not found: {weights_path}")
+            print(f"[WARNING] [ActionRecognizer] Weights file not found: {weights_path}")
             print("    Model-based action recognition will be DISABLED for this run.")
             return None
         try:
@@ -97,6 +97,10 @@ class ActionRecognizer:
                 nn.Dropout(p=0.5),
                 nn.Linear(model.fc.in_features, len(ACTION_CLASSES))
             )
+            
+            # Ensure the weights zip file has the correct structure for PyTorch
+            weights_path = self._ensure_valid_zip_structure(weights_path)
+            
             sd = torch.load(weights_path, map_location='cpu')
             # Handle both raw state-dict and checkpoint dicts
             if isinstance(sd, dict) and 'state_dict' in sd:
@@ -105,12 +109,84 @@ class ActionRecognizer:
                 sd = sd['model_state_dict']
             model.load_state_dict(sd)
             model.eval().to(self.device)
-            print(f"✅ [ActionRecognizer] Loaded weights from {weights_path}")
+            print(f"[SUCCESS] [ActionRecognizer] Loaded weights from {weights_path}")
             return model
         except Exception as e:
-            print(f"⚠️  [ActionRecognizer] Failed to load weights: {e}")
+            print(f"[WARNING] [ActionRecognizer] Failed to load weights: {e}")
             print("    Model-based action recognition will be DISABLED for this run.")
             return None
+
+    def _ensure_valid_zip_structure(self, filepath: str) -> str:
+        """
+        Detects if the weights zip file lacks a top-level directory structure,
+        which causes PyTorch's zip reader to fail with:
+        'Expected hasRecord("version") to be true, but got false'.
+        If detected, it automatically repackages the zip file to include a prefix directory.
+        """
+        import os
+        import zipfile
+        import shutil
+
+        if not zipfile.is_zipfile(filepath):
+            return filepath
+
+        has_root_files = False
+        try:
+            with zipfile.ZipFile(filepath, 'r') as z:
+                namelist = z.namelist()
+                if 'version' in namelist or 'data.pkl' in namelist:
+                    has_root_files = True
+        except Exception:
+            return filepath
+
+        if not has_root_files:
+            return filepath
+
+        fixed_path = filepath.replace(".pt", "_fixed.pt")
+        # If fixed file already exists, return it
+        if os.path.isfile(fixed_path):
+            return fixed_path
+
+        print(f"[WARNING] [ActionRecognizer] Detected root-level zip structure in weights: {filepath}")
+        print("   This causes PyTorch to fail loading the weights. Auto-repackaging weights...")
+
+        try:
+            temp_dir = filepath + "_temp_extract"
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            os.makedirs(temp_dir, exist_ok=True)
+
+            with zipfile.ZipFile(filepath, 'r') as z:
+                z.extractall(temp_dir)
+
+            # Re-zip with prefix 'archive/'
+            with zipfile.ZipFile(fixed_path, 'w', zipfile.ZIP_DEFLATED) as z_out:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, temp_dir)
+                        rel_path = rel_path.replace(os.path.sep, '/')
+                        archive_path = "archive/" + rel_path
+                        z_out.write(full_path, archive_path)
+
+            shutil.rmtree(temp_dir)
+
+            # Try to overwrite original file
+            try:
+                shutil.copy2(fixed_path, filepath)
+                print(f"[SUCCESS] [ActionRecognizer] Successfully repackaged and overwrote original {filepath}")
+                try:
+                    os.remove(fixed_path)
+                except Exception:
+                    pass
+                return filepath
+            except Exception:
+                print(f"[INFO] [ActionRecognizer] Loaded repackaged weights from {fixed_path}")
+                return fixed_path
+
+        except Exception as e:
+            print(f"[ERROR] [ActionRecognizer] Failed to auto-repackage zip: {e}")
+            return filepath
 
     def _crop_player(self, frame: np.ndarray, bbox: tuple):
         """Crop frame around player bbox with padding. Returns resized crop or None."""
