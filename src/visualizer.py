@@ -118,37 +118,19 @@ class Visualizer:
                     frame = tri_ann.annotate(scene=frame, detections=poss_det)
 
         # ── 4. Ball trail ───────────────────────────────────────────────
-        if BALL_TRAIL_ENABLED and ball_trail and len(ball_trail) > 1:
-            pts = list(ball_trail)
-            n   = len(pts)
-            for i in range(1, n):
-                # Fade: older points are thinner and more transparent
-                alpha     = i / n                          # 0..1, newest = 1
-                thickness = max(1, int(BALL_TRAIL_THICKNESS * alpha))
-                # Blend trail colour toward dark with age
-                c = tuple(int(v * alpha) for v in BALL_TRAIL_COLOR)
-                cv2.line(frame, pts[i - 1], pts[i], c, thickness, cv2.LINE_AA)
+        # Disabled as per user request to remove trail/path prediction.
 
         # ── 5. Ball marker ──────────────────────────────────────────────
         if ball_data is not None:
             bbox, is_interpolated = ball_data
-            if bbox is not None:
+            if bbox is not None and not is_interpolated:
                 x1, y1, x2, y2 = map(int, bbox)
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2
                 radius = max((x2 - x1), (y2 - y1)) // 2 + 3
 
-                color = (0, 0, 200) if is_interpolated else (0, 215, 255)
-                cv2.circle(frame, (cx, cy), radius + 2, (0, 0, 0), 2, cv2.LINE_AA)
-                cv2.circle(frame, (cx, cy), radius, color,
-                           -1 if is_interpolated else 2, cv2.LINE_AA)
-
-                # Small indicator arrow above ball
-                pt1 = (cx,     cy - radius - 6)
-                pt2 = (cx - 5, cy - radius - 14)
-                pt3 = (cx + 5, cy - radius - 14)
-                tri = np.array([pt1, pt2, pt3])
-                cv2.drawContours(frame, [tri], 0, color, -1, cv2.LINE_AA)
+                # Draw a simple circle on the ball and that's it!
+                cv2.circle(frame, (cx, cy), radius, (0, 215, 255), 2, cv2.LINE_AA)
 
         return frame
 

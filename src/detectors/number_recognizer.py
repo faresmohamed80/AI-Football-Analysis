@@ -39,6 +39,25 @@ class NumberRecognizer:
                 
         # لو ملقاش أي أرقام على التيشيرت في الفريم ده
         if len(digits) == 0:
+            # Fallback: لو الباوندري كبير والكاميرا قريبة، جرب تدور في منطقة الشورت
+            h_crop = y2 - y1
+            if h_crop > 150: # باوندري كبير
+                # منطقة الشورت تقريباً من 45% إلى 85% من الطول
+                ys1 = int(y1 + 0.45 * h_crop)
+                ys2 = int(y1 + 0.85 * h_crop)
+                shorts_crop = frame[ys1:ys2, x1:x2]
+                
+                if shorts_crop.size > 0:
+                    shorts_results = self.model(shorts_crop, conf=NUMBER_CONFIDENCE, verbose=False)
+                    for result in shorts_results:
+                        boxes = result.boxes
+                        for box in boxes:
+                            digit_x1 = int(box.xyxy[0][0])
+                            digit_class = int(box.cls[0]) 
+                            digits.append((digit_x1, str(digit_class)))
+                            
+        # لو ملقاش أي أرقام
+        if len(digits) == 0:
             return None
             
         # 2. ترتيب الأرقام من اليسار لليمين بناءً على إحداثي X
@@ -49,4 +68,12 @@ class NumberRecognizer:
         # مثلاً: ['1', '0'] هتتحول لـ "10"
         final_number = "".join([d[1] for d in digits])
         
+        # تصفية الأرقام غير المنطقية (رقم صفر، أو 3 أرقام فأكثر)
+        try:
+            val = int(final_number)
+            if val == 0 or len(final_number) >= 3:
+                return None
+        except ValueError:
+            return None
+            
         return final_number
