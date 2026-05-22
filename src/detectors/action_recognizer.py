@@ -49,14 +49,16 @@ class ActionRecognizer:
     def update(self, track_id: int, frame: np.ndarray, bbox: tuple):
         """
         Call every frame for the ball possessor.
-        Returns (action_label, confidence) or None if buffer not ready.
+        Returns (action_label, confidence) ONLY when a brand-new inference
+        completes (i.e. every BUFFER_SIZE frames of possession).
+        Returns None otherwise — use get_last_action() for HUD display.
         """
         if not self.enabled:
             return None
 
         crop = self._crop_player(frame, bbox)
         if crop is None:
-            return self._last_action.get(track_id)
+            return None  # No crop available; don't count, but last action still accessible
 
         # Init buffer for new track_id
         if track_id not in self._buffers:
@@ -64,17 +66,18 @@ class ActionRecognizer:
 
         self._buffers[track_id].append(crop)
 
-        # Run inference when buffer is full
+        # Run inference ONLY when buffer fills up
         if len(self._buffers[track_id]) == BUFFER_SIZE:
             result = self._infer(self._buffers[track_id])
+            self._buffers[track_id].clear()   # always reset after inference
             if result[1] >= CONF_THRESHOLD:
                 self._last_action[track_id] = result
-                self._buffers[track_id].clear()   # reset for next clip
-            else:
-                result = None
+                return result          # <-- NEW inference: caller should count this
 
-            return result
+        return None  # Buffer still filling; return None (use get_last_action for display)
 
+    def get_last_action(self, track_id: int):
+        """Return the most recent confirmed action for a player (for HUD display only)."""
         return self._last_action.get(track_id)
 
     def clear_player(self, track_id: int):

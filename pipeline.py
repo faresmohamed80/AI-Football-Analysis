@@ -285,25 +285,37 @@ def main():
         # ---------------------------------------------------------
         # ج. حساب الإحصائيات (الاستحواذ + السرعة + الهيت ماب) 📊
         # ---------------------------------------------------------
+        prev_possessor_tid = stats_tracker.possessor_tid
         stats_tracker.update(players_data, ball_data, radar_seg.matrix, radar_seg.dx, radar_seg.dy)
+        new_possessor_tid = stats_tracker.possessor_tid
+
+        # Clear action buffer for the player who JUST LOST possession
+        if prev_possessor_tid is not None and prev_possessor_tid != new_possessor_tid:
+            action_recognizer.clear_player(prev_possessor_tid)
 
         # Run deep learning action recognition on the active ball possessor
-        if stats_tracker.possessor_tid is not None:
-            active_p = next((p for p in players_data if p['track_id'] == stats_tracker.possessor_tid), None)
+        if new_possessor_tid is not None:
+            active_p = next((p for p in players_data if p['track_id'] == new_possessor_tid), None)
             if active_p:
-                action_res = action_recognizer.update(stats_tracker.possessor_tid, frame, active_p['bbox'])
+                # update() returns a result ONLY when a new 32-frame inference completes
+                action_res = action_recognizer.update(new_possessor_tid, frame, active_p['bbox'])
                 if action_res:
+                    # New inference completed → count it once
                     action_label, confidence = action_res
-                    model_player_actions[stats_tracker.possessor_tid][action_label] += 1
+                    model_player_actions[new_possessor_tid][action_label] += 1
                     t_name = active_p['team']
                     if t_name not in ('Referee', 'Unknown'):
                         model_team_actions[t_name][action_label] += 1
-        
-        # Clear buffers for all other players
-        for p in players_data:
-            tid = p['track_id']
-            if tid != stats_tracker.possessor_tid:
-                action_recognizer.clear_player(tid)
+
+                # Use get_last_action() for HUD display (doesn't affect counting)
+                last_action = action_recognizer.get_last_action(new_possessor_tid)
+                if last_action:
+                    stats_tracker.current_action      = last_action[0]
+                    stats_tracker.current_action_conf = last_action[1]
+                    stats_tracker.action_display_frames = max(
+                        stats_tracker.action_display_frames, 30
+                    )
+
 
         # تحديث تتبع السرعة والمسافة
         tracks_for_speed = {}
