@@ -31,6 +31,24 @@ from src.api_client import APIClient, hex_to_hsv, hex_to_bgr
 # ---------------------------------------------------------
 
 def main():
+    # ─────────────────────────────────────────────────────────
+    # 🔧 Mode Selection: Local or Backend
+    # ─────────────────────────────────────────────────────────
+    print("\n" + "═"*50)
+    print("  AI Football Analysis - Mode Selection")
+    print("═"*50)
+    print("  1. Local Mode   → Output saved on this machine")
+    print("  2. Backend Mode → Upload results to API server")
+    print("═"*50)
+    while True:
+        choice = input("  Enter choice (1 or 2): ").strip()
+        if choice in ("1", "2"):
+            break
+        print("  ⚠️  Please enter 1 or 2")
+    run_local = (choice == "1")
+    mode_label = "🖥️  LOCAL" if run_local else "☁️  BACKEND"
+    print(f"\n  ✅ Running in {mode_label} mode\n")
+
     print("⚙️ Loading models and systems... Please wait.")
     
     # --- API Integration: Fetch Match Data ---
@@ -299,16 +317,18 @@ def main():
     cap.release()
     out.release()
 
-    # Merge heatmap positions by player name to prevent duplicates
+    # Merge heatmap positions by player name (only for identified players)
     from collections import defaultdict
     merged_heatmap_positions = defaultdict(list)
     for tid, positions in heatmap_tracker.player_positions.items():
-        p_name = track_id_to_name.get(tid, f"Player #{tid}")
-        if p_name in ["Identifying...", "Unknown"]:
-            p_name = f"Player #{tid}"
+        p_name = track_id_to_name.get(tid)
+        # Skip players whose jersey number was never identified
+        if not p_name or p_name in ["Identifying...", "Unknown"]:
+            continue  # ← Do NOT generate heatmap for unidentified players
         merged_heatmap_positions[p_name].extend(positions)
-    
+
     heatmap_tracker.player_positions = merged_heatmap_positions
+    print(f"\n🗺️  Generating heatmaps for {len(merged_heatmap_positions)} identified players...")
 
     # 7. Generate Heatmap images for each player
     heatmap_paths = heatmap_tracker.generate_heatmaps(min_frames=MIN_FRAMES_FOR_HEATMAP)
@@ -330,13 +350,44 @@ def main():
     
     print(f"Video saved to: {OUTPUT_VIDEO_PATH}")
 
+    # --- Local Stats Output (always printed) ---
+    print("\n" + "="*58)
+    print("  FINAL MATCH STATISTICS")
+    print("="*58)
+    for tname, stats in team_stats_payload.items():
+        print(f"\n  {tname}:")
+        for k, v in stats.items():
+            print(f"    {k:<28} {v}")
+
+    print("\n  Player Actions (top 10):")
+    player_action_stats = sorted(
+        player_stats_payload,
+        key=lambda x: sum(x["actions"].values()),
+        reverse=True
+    )
+    for p in player_action_stats[:10]:
+        print(f"    {p['player_name']:<25} ({p['team']}) {p['actions']}")
+
+    # Save stats to JSON file locally
+    import json as _json
+    local_stats_path = os.path.join(BASE_DIR, "data", "output_data", "match_stats.json")
+    local_output = {
+        "team_stats":   team_stats_payload,
+        "player_stats": player_stats_payload,
+        "heatmap_paths": {k: str(v) for k, v in (heatmap_paths or {}).items()},
+    }
+    with open(local_stats_path, "w", encoding="utf-8") as f:
+        _json.dump(local_output, f, ensure_ascii=False, indent=2)
+    print(f"\n💾 Stats saved locally → {local_stats_path}")
+
     # --- API Integration: Upload Heatmaps & Submit Results ---
     heatmap_urls = {}
-    if heatmap_paths:
-        for player_name, h_path in heatmap_paths.items():
-            url = api.upload_heatmap(player_name, h_path)
-            if url:
-                heatmap_urls[player_name] = url
+    if not run_local:
+        if heatmap_paths:
+            for player_name, h_path in heatmap_paths.items():
+                url = api.upload_heatmap(player_name, h_path)
+                if url:
+                    heatmap_urls[player_name] = url
                 
     # Prepare player stats (speed + distance + actions)
     # Group and merge statistics by player name to prevent duplicate entries
@@ -434,14 +485,18 @@ def main():
     for p in player_action_stats[:10]:
         print(f"    {p['player_name']:<25} ({p['team']}) {p['actions']}")
 
-    api.submit_ai_results(
-        match_id=MATCH_ID,
-        final_stats=final_stats,
-        event_stats=event_stats,
-        player_stats=player_stats_payload,
-        heatmap_urls=heatmap_urls,
-        team_stats=team_stats_payload
-    )
+    if not run_local:
+        api.submit_ai_results(
+            match_id=MATCH_ID,
+            final_stats=final_stats,
+            event_stats=event_stats,
+            player_stats=player_stats_payload,
+            heatmap_urls=heatmap_urls,
+            team_stats=team_stats_payload
+        )
+        print("\n☁️  Results submitted to backend API successfully!")
+    else:
+        print("\n🖥️  Local mode: Skipped API upload. All results saved on machine.")
 
 if __name__ == "__main__":
     main()

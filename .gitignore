@@ -13,3 +13,4 @@ __pycache__/
 augmented_dataset/
 manual_crops/
 benchmark_results/
+*.zip
