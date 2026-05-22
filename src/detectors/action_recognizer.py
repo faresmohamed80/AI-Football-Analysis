@@ -34,6 +34,7 @@ class ActionRecognizer:
     def __init__(self, weights_path: str, device: str = 'cpu'):
         self.device = torch.device(device)
         self.model  = self._load_model(weights_path)
+        self.enabled = (self.model is not None)
 
         # Per-player frame buffers: track_id → deque of cropped frames
         self._buffers: dict[int, deque] = {}
@@ -50,6 +51,9 @@ class ActionRecognizer:
         Call every frame for the ball possessor.
         Returns (action_label, confidence) or None if buffer not ready.
         """
+        if not self.enabled:
+            return None
+
         crop = self._crop_player(frame, bbox)
         if crop is None:
             return self._last_action.get(track_id)
@@ -81,17 +85,32 @@ class ActionRecognizer:
     # Private helpers
     # ──────────────────────────────────────────────────────────────
 
-    def _load_model(self, weights_path: str) -> nn.Module:
-        model = video_models.r3d_18(weights=None)
-        model.fc = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(model.fc.in_features, len(ACTION_CLASSES))
-        )
-        sd = torch.load(weights_path, map_location='cpu')
-        model.load_state_dict(sd)
-        model.eval().to(self.device)
-        print(f"[ActionRecognizer] Loaded weights from {weights_path}")
-        return model
+    def _load_model(self, weights_path: str):
+        import os
+        if not os.path.isfile(weights_path):
+            print(f"⚠️  [ActionRecognizer] Weights file not found: {weights_path}")
+            print("    Model-based action recognition will be DISABLED for this run.")
+            return None
+        try:
+            model = video_models.r3d_18(weights=None)
+            model.fc = nn.Sequential(
+                nn.Dropout(p=0.5),
+                nn.Linear(model.fc.in_features, len(ACTION_CLASSES))
+            )
+            sd = torch.load(weights_path, map_location='cpu')
+            # Handle both raw state-dict and checkpoint dicts
+            if isinstance(sd, dict) and 'state_dict' in sd:
+                sd = sd['state_dict']
+            elif isinstance(sd, dict) and 'model_state_dict' in sd:
+                sd = sd['model_state_dict']
+            model.load_state_dict(sd)
+            model.eval().to(self.device)
+            print(f"✅ [ActionRecognizer] Loaded weights from {weights_path}")
+            return model
+        except Exception as e:
+            print(f"⚠️  [ActionRecognizer] Failed to load weights: {e}")
+            print("    Model-based action recognition will be DISABLED for this run.")
+            return None
 
     def _crop_player(self, frame: np.ndarray, bbox: tuple):
         """Crop frame around player bbox with padding. Returns resized crop or None."""
