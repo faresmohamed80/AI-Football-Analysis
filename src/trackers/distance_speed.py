@@ -16,7 +16,19 @@ class SpeedDistanceTracker:
         # 🔥 history للـ smoothing
         self.speed_history = defaultdict(list)
 
-    def convert_position(self, point):
+    def convert_position(self, point, homography_matrix=None, dx=0, dy=0, radar_w=400, radar_h=240):
+        # 🔥 dynamic homography if provided (moving camera compensation)
+        if homography_matrix is not None:
+            x, y = point
+            pt = np.array([[[x, y]]], dtype=np.float32)
+            transformed = cv2.perspectiveTransform(pt, homography_matrix)
+            rx = transformed[0][0][0] + dx
+            ry = transformed[0][0][1] + dy
+            px = (rx / float(radar_w)) * 105.0
+            py = (ry / float(radar_h)) * 68.0
+            return (float(np.clip(px, 0.0, 105.0)), float(np.clip(py, 0.0, 68.0)))
+
+        # Fallback to static homography
         if self.homography_matrix is not None:
             px = np.array([[point]], dtype='float32')
             transformed = cv2.perspectiveTransform(px, self.homography_matrix)
@@ -26,14 +38,14 @@ class SpeedDistanceTracker:
         return (x * self.pixel_to_meter_ratio,
                 y * self.pixel_to_meter_ratio)
 
-    def update(self, tracks):
+    def update(self, tracks, homography_matrix=None, dx=0, dy=0):
         """
         tracks: dict -> {track_id: (x, y)}
         """
 
         for track_id, current_pos in tracks.items():
 
-            current_pos = self.convert_position(current_pos)
+            current_pos = self.convert_position(current_pos, homography_matrix, dx, dy)
 
             if track_id in self.prev_positions:
                 prev_pos = self.prev_positions[track_id]

@@ -17,6 +17,26 @@ class SemanticPitchMapper:
         self.smoothing = smoothing
         self.initialized = False
 
+    def clean_mask(self, mask, min_area=4000):
+        """
+        🛡️ تصفية الماسك من التشوهات والقطوعات العشوائية.
+        يبقي فقط على أكبر مكون متصل يتجاوز المساحة المحددة.
+        """
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask)
+        if num_labels <= 1:
+            return np.zeros_like(mask)
+        
+        # استخراج المساحات للمكونات (مع تخطي الخلفية رقم 0)
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        max_idx = np.argmax(areas) + 1  # تعويض الإزاحة بسبب الخلفية
+        max_area = stats[max_idx, cv2.CC_STAT_AREA]
+        
+        if max_area < min_area:
+            return np.zeros_like(mask)
+        
+        cleaned = (labels == max_idx).astype(np.uint8) * 255
+        return cleaned
+
     def transform_point(self, point, matrix):
         """تطبيق مصفوفة المنظور على نقطة واحدة"""
         pt = np.array([[[point[0], point[1]]]], dtype=np.float32)
@@ -43,6 +63,10 @@ class SemanticPitchMapper:
                 masks_dict[cls_idx] = cv2.bitwise_or(masks_dict[cls_idx], mask)
             else:
                 masks_dict[cls_idx] = mask
+
+        # 🛡️ تنظيف الماسكات المدمجة لإزالة أي تشوهات أو مساحات عشوائية صغيرة
+        for cls_idx in list(masks_dict.keys()):
+            masks_dict[cls_idx] = self.clean_mask(masks_dict[cls_idx], min_area=4000)
 
         detected_dx, detected_dy = None, None
 
@@ -109,6 +133,14 @@ class SemanticPitchMapper:
                 self.current_dy = detected_dy
                 self.initialized = True
             else:
+                # 🛡️ فلترة القفزات المفاجئة (Outlier Jump Rejection)
+                # إذا كانت القفزة غير طبيعية أو نتيجة تشوه مفاجئ في الموديل، نتجاهلها ونحافظ على نعومة التتبع
+                diff_x = abs(detected_dx - self.current_dx)
+                diff_y = abs(detected_dy - self.current_dy)
+                if diff_x > 80.0 or diff_y > 50.0:
+                    detected_dx = self.current_dx
+                    detected_dy = self.current_dy
+                
                 self.current_dx = (self.smoothing * detected_dx) + ((1 - self.smoothing) * self.current_dx)
                 self.current_dy = (self.smoothing * detected_dy) + ((1 - self.smoothing) * self.current_dy)
         

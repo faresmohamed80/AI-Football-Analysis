@@ -12,6 +12,7 @@ from ultralytics import YOLO
 from src.detectors.player_detector import PlayerDetector
 from src.detectors.number_recognizer import NumberRecognizer
 from src.detectors.team_classifier import TeamClassifier
+from src.detectors.action_recognizer import ActionRecognizer
 from src.trackers.number_voter import NumberVotingSystem
 from src.trackers.ball_tracker import BallTracker
 from src.trackers.stat_tracker import MatchStats
@@ -127,7 +128,11 @@ def main():
     )
 
     # 3. Action Recognition configuration
-    # Note: Deep learning Action Recognition (R3D-18) has been replaced by physical rule-based logic in MatchStats.
+    print("🧠 Loading R3D-18 Action Recognition model...")
+    from collections import defaultdict, Counter
+    action_recognizer = ActionRecognizer(weights_path=ACTION_RECOGNIZER_WEIGHTS)
+    model_player_actions = defaultdict(Counter)
+    model_team_actions = defaultdict(Counter)
     
     # 🔴 Loading stadium segmentation model for radar
     pitch_segmenter = YOLO(STADIUM_SEGMENTER_WEIGHTS)
@@ -282,6 +287,24 @@ def main():
         # ---------------------------------------------------------
         stats_tracker.update(players_data, ball_data, radar_seg.matrix, radar_seg.dx, radar_seg.dy)
 
+        # Run deep learning action recognition on the active ball possessor
+        if stats_tracker.possessor_tid is not None:
+            active_p = next((p for p in players_data if p['track_id'] == stats_tracker.possessor_tid), None)
+            if active_p:
+                action_res = action_recognizer.update(stats_tracker.possessor_tid, frame, active_p['bbox'])
+                if action_res:
+                    action_label, confidence = action_res
+                    model_player_actions[stats_tracker.possessor_tid][action_label] += 1
+                    t_name = active_p['team']
+                    if t_name not in ('Referee', 'Unknown'):
+                        model_team_actions[t_name][action_label] += 1
+        
+        # Clear buffers for all other players
+        for p in players_data:
+            tid = p['track_id']
+            if tid != stats_tracker.possessor_tid:
+                action_recognizer.clear_player(tid)
+
         # تحديث تتبع السرعة والمسافة
         tracks_for_speed = {}
         heatmap_positions = {}
@@ -292,10 +315,18 @@ def main():
             feet_x = (bx1 + bx2) / 2
             feet_y = by2
             tracks_for_speed[tid] = (feet_x, feet_y)
-            # Store by track_id (tid) to allow proper merging at the end of the video
-            heatmap_positions[tid] = (feet_x / width, feet_y / height)
+            
+            # Convert screen coordinates to real pitch coordinates (compensating for moving camera)
+            px, py = stats_tracker._to_pitch_coords(feet_x, feet_y, radar_seg.matrix, radar_seg.dx, radar_seg.dy)
+            # Store normalized real pitch coordinates (0.0 to 1.0) by track_id (tid)
+            heatmap_positions[tid] = (px / 105.0, py / 68.0)
 
-        total_dist, speeds = speed_tracker.update(tracks_for_speed)
+        total_dist, speeds = speed_tracker.update(
+            tracks_for_speed,
+            homography_matrix=radar_seg.matrix,
+            dx=radar_seg.dx,
+            dy=radar_seg.dy
+        )
         heatmap_tracker.update(heatmap_positions)
 
         # ---------------------------------------------------------
@@ -304,7 +335,7 @@ def main():
         # 1. Draw player/ball annotations (supervision)
         annotated_frame = Visualizer.draw_annotations(
             frame, players_data, ball_data,
-            possessor_name=stats_tracker.current_possessor,
+            possessor_id=stats_tracker.possessor_tid,
             ball_trail=ball_trail
         )
 
@@ -334,9 +365,9 @@ def main():
     merged_heatmap_positions = defaultdict(list)
     for tid, positions in heatmap_tracker.player_positions.items():
         p_name = track_id_to_name.get(tid)
-        # Match naming convention in player_stats_payload for unidentified players
+        # Skip unidentified players
         if not p_name or p_name in ["Identifying...", "Unknown"]:
-            p_name = f"Player (Track #{tid})"
+            continue
         merged_heatmap_positions[p_name].extend(positions)
 
     heatmap_tracker.player_positions = merged_heatmap_positions
@@ -353,27 +384,33 @@ def main():
     from collections import Counter
     merged_player_stats = {}
     
-    # 1. First, map track_ids to their final names
+    # 1. First, map track_ids to their final names, ignoring unidentified tracks
     final_id_to_name = {}
     for tid in speed_tracker.total_distance.keys():
-        p_name = track_id_to_name.get(tid, f"Player (Track #{tid})")
-        final_id_to_name[tid] = p_name
+        p_name = track_id_to_name.get(tid)
+        if p_name and p_name not in ["Identifying...", "Unknown"]:
+            final_id_to_name[tid] = p_name
         
     for tid in stats_tracker.player_actions.keys():
         if tid not in final_id_to_name:
-            p_name = track_id_to_name.get(tid, f"Player (Track #{tid})")
-            final_id_to_name[tid] = p_name
+            p_name = track_id_to_name.get(tid)
+            if p_name and p_name not in ["Identifying...", "Unknown"]:
+                final_id_to_name[tid] = p_name
 
-    # 2. Iterate and merge
+    for tid in model_player_actions.keys():
+        if tid not in final_id_to_name:
+            p_name = track_id_to_name.get(tid)
+            if p_name and p_name not in ["Identifying...", "Unknown"]:
+                final_id_to_name[tid] = p_name
+
+    # 2. Iterate and merge only identified players
     for tid, t_name in final_id_to_name.items():
         t_team = track_id_to_team.get(tid, "Unknown")
         t_dist = speed_tracker.total_distance.get(tid, 0.0)
         t_speed = speed_tracker.top_speeds.get(tid, 0.0)
         tid_actions = stats_tracker.player_actions.get(tid, Counter())
+        tid_model_actions = model_player_actions.get(tid, Counter())
         
-        if t_name in ["Identifying...", "Unknown"]:
-            t_name = f"Player (Track #{tid})"
-            
         if t_name not in merged_player_stats:
             merged_player_stats[t_name] = {
                 "track_id": int(tid),
@@ -381,7 +418,8 @@ def main():
                 "team": t_team,
                 "total_distance": float(t_dist),
                 "top_speed": float(t_speed),
-                "actions": Counter(tid_actions)
+                "physical_actions": Counter(tid_actions),
+                "model_actions": Counter(tid_model_actions)
             }
         else:
             entry = merged_player_stats[t_name]
@@ -389,11 +427,15 @@ def main():
                 entry["team"] = t_team
             entry["total_distance"] += float(t_dist)
             entry["top_speed"] = max(entry["top_speed"], float(t_speed))
-            entry["actions"].update(tid_actions)
+            entry["physical_actions"].update(tid_actions)
+            entry["model_actions"].update(tid_model_actions)
 
     player_stats_payload = []
     for p_name, data in merged_player_stats.items():
-        data["actions"] = dict(data["actions"])
+        data["physical_actions"] = dict(data["physical_actions"])
+        data["model_actions"] = dict(data["model_actions"])
+        # Backwards compatibility key
+        data["actions"] = data["physical_actions"]
         player_stats_payload.append(data)
 
     # ── Comprehensive Team Stats ───────────────────────────────────────
@@ -409,6 +451,9 @@ def main():
         team_dists   = [p["total_distance"] for p in team_players]
         team_speeds  = [p["top_speed"] for p in team_players]
 
+        t_phys_actions = {f"action_{k.lower()}": v for k, v in team_action_stats.get(tname, {}).items()}
+        t_model_actions = {f"action_{k.lower()}": v for k, v in model_team_actions.get(tname, {}).items()}
+
         team_stats_payload[tname] = {
             # Possession
             "possession_pct":    possession_stats.get(tname, 0),
@@ -421,9 +466,9 @@ def main():
             # Traditional events
             "passes":            event_stats["passes_t1" if is_t1 else "passes_t2"],
             "interceptions":     event_stats["inter_t1"  if is_t1 else "inter_t2"],
-            # Action model events (SHOT, HEADER, CROSS, etc.)
-            **{f"action_{k.lower()}": v
-               for k, v in team_action_stats.get(tname, {}).items()},
+            # Breakdowns
+            "physical_actions":  t_phys_actions,
+            "model_actions":     t_model_actions,
         }
     
     print(f"\n✅ Finished! Final Statistics:")
@@ -441,22 +486,35 @@ def main():
     print(f"Video saved to: {OUTPUT_VIDEO_PATH}")
 
     # --- Local Stats Output (always printed) ---
-    print("\n" + "="*58)
+    print("\n" + "="*65)
     print("  FINAL MATCH STATISTICS")
-    print("="*58)
+    print("="*65)
     for tname, stats in team_stats_payload.items():
-        print(f"\n  {tname}:")
-        for k, v in stats.items():
-            print(f"    {k:<28} {v}")
+        print(f"\n  🛡️  {tname}:")
+        print(f"    Possession:         {stats['possession_pct']}%")
+        print(f"    Total Distance:     {stats['total_distance_km']} km")
+        print(f"    Top Speed:          {stats['top_speed_kmh']} km/h")
+        print(f"    Passes (Physical):  {stats['passes']}")
+        print(f"    Interceptions:      {stats['interceptions']}")
+        print(f"    [Physical Actions Breakdown]:")
+        for k, v in stats['physical_actions'].items():
+            print(f"      - {k:<20} {v}")
+        print(f"    [Model-based Actions (R3D-18) Breakdown]:")
+        for k, v in stats['model_actions'].items():
+            print(f"      - {k:<20} {v}")
 
-    print("\n  Player Actions (top 10):")
+    print("\n" + "="*65)
+    print("  PLAYER ACTION COMPARISON (Top 10)")
+    print("="*65)
     player_action_stats = sorted(
         player_stats_payload,
-        key=lambda x: sum(x["actions"].values()),
+        key=lambda x: sum(x["physical_actions"].values()) + sum(x["model_actions"].values()),
         reverse=True
     )
     for p in player_action_stats[:10]:
-        print(f"    {p['player_name']:<25} ({p['team']}) {p['actions']}")
+        print(f"  👤 {p['player_name']} ({p['team']}):")
+        print(f"     • Physical Rules: {p['physical_actions']}")
+        print(f"     • R3D-18 Model:   {p['model_actions']}")
 
     # Save stats to JSON file locally
     import json as _json
