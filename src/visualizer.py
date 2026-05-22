@@ -42,7 +42,7 @@ class Visualizer:
 
     @staticmethod
     def draw_annotations(frame, players_data, ball_data=None,
-                         possessor_name: str | None = None,
+                         possessor_id: int | None = None,
                          ball_trail: deque | None = None):
         """
         Draw:
@@ -99,10 +99,10 @@ class Visualizer:
             )
 
             # ── 3. Triangle above ball possessor ───────────────────────
-            if possessor_name:
+            if possessor_id is not None:
                 poss_indices = [
-                    i for i, lbl in enumerate(labels)
-                    if lbl and lbl in possessor_name
+                    i for i, p in enumerate(players_data)
+                    if p.get('track_id') == possessor_id
                 ]
                 if poss_indices:
                     poss_det = det[poss_indices]

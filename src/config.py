@@ -13,7 +13,7 @@ BALL_DETECTOR_WEIGHTS     = os.path.join(BASE_DIR, "weights", "football ball det
 NUMBER_RECOGNIZER_WEIGHTS = os.path.join(BASE_DIR, "weights", "jersey_recognition.pt")
 STADIUM_SEGMENTER_WEIGHTS = os.path.join(BASE_DIR, "weights", "Studiam_seg.pt")
 FIELD_DETECTOR_WEIGHTS    = os.path.join(BASE_DIR, "weights", "football-field-detection-15", "weights", "best.pt")
-ACTION_RECOGNIZER_WEIGHTS = os.path.join(BASE_DIR, "weights", "action.zip")
+ACTION_RECOGNIZER_WEIGHTS = os.path.join(BASE_DIR, "weights", "action", "best_soccer_r3d_model.pt")
 
 
 # ─────────────────────────────────────────────────────────

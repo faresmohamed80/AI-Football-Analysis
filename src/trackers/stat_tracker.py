@@ -258,16 +258,28 @@ class MatchStats:
         contact_team  = None
         contact_name  = None
 
+        closest_p = None
+        min_dist = float('inf')
+
         for p in players_data:
             if p['team'] in ('Referee', 'Unknown'):
                 continue
             if self._ball_in_feet_zone(ball_cx, ball_cy, p['bbox']):
-                contact_tid  = p['track_id']
-                contact_team = p['team']
-                contact_name = p.get('name') or f"Player #{contact_tid}"
-                self.player_names[contact_tid] = contact_name
-                self.player_teams[contact_tid] = contact_team
-                break
+                # Calculate distance between player's feet center and ball center
+                x1, y1, x2, y2 = p['bbox']
+                feet_cx = (x1 + x2) / 2
+                feet_cy = y2
+                dist = np.sqrt((feet_cx - ball_cx)**2 + (feet_cy - ball_cy)**2)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_p = p
+
+        if closest_p is not None:
+            contact_tid  = closest_p['track_id']
+            contact_team = closest_p['team']
+            contact_name = closest_p.get('name') or f"Player #{contact_tid}"
+            self.player_names[contact_tid] = contact_name
+            self.player_teams[contact_tid] = contact_team
 
         # ── Process contact ────────────────────────────────────────────
         if contact_tid is not None:
