@@ -14,6 +14,7 @@ from src.detectors.number_recognizer import NumberRecognizer
 from src.detectors.team_classifier import TeamClassifier
 from src.detectors.action_recognizer import ActionRecognizer
 from src.trackers.number_voter import NumberVotingSystem
+from src.trackers.team_voter import TeamVotingSystem
 from src.trackers.ball_tracker import BallTracker
 from src.trackers.stat_tracker import MatchStats
 from src.visualizer import Visualizer
@@ -88,23 +89,26 @@ def main():
 
     
     # Fetch ALL color ranges from DB (primary + secondary + GK)
-    home_hsv_list = [
-        hex_to_hsv(home_team.get("primary_tshirt_colors")),
-        hex_to_hsv(home_team.get("secondary_tshirt_colors")),
-        hex_to_hsv(home_team.get("goalkeeper_tshirt_colors")),
-    ]
-    away_hsv_list = [
-        hex_to_hsv(away_team.get("primary_tshirt_colors")),
-        hex_to_hsv(away_team.get("secondary_tshirt_colors")),
-        hex_to_hsv(away_team.get("goalkeeper_tshirt_colors")),
-    ]
-    
-    # Filter out None values (NULL entries from DB)
-    team_1_hsv = [r for r in home_hsv_list if r is not None] or TEAM_1_HSV
-    team_2_hsv = [r for r in away_hsv_list if r is not None] or TEAM_2_HSV
-    
-    print(f"Team 1 ({team_1_name}) HSV Ranges: {len(team_1_hsv)} colors loaded from DB")
-    print(f"Team 2 ({team_2_name}) HSV Ranges: {len(team_2_hsv)} colors loaded from DB")
+    # hex_to_hsv now returns a LIST of ranges per colour to cover lighting
+    # variants.  We flatten all colour lists into one master list per team.
+    def _load_hsv_ranges(team_dict, fallback):
+        """Flatten multi-range outputs from hex_to_hsv into one list."""
+        keys = ["primary_tshirt_colors", "secondary_tshirt_colors", "goalkeeper_tshirt_colors"]
+        ranges = []
+        for k in keys:
+            result = hex_to_hsv(team_dict.get(k))  # list-of-dicts or None
+            if result is not None:
+                if isinstance(result, list):
+                    ranges.extend(result)           # flatten
+                else:
+                    ranges.append(result)           # legacy single-dict safety
+        return ranges if ranges else fallback
+
+    team_1_hsv = _load_hsv_ranges(home_team, TEAM_1_HSV)
+    team_2_hsv = _load_hsv_ranges(away_team, TEAM_2_HSV)
+
+    print(f"Team 1 ({team_1_name}) HSV Ranges: {len(team_1_hsv)} lighting variants loaded")
+    print(f"Team 2 ({team_2_name}) HSV Ranges: {len(team_2_hsv)} lighting variants loaded")
     
     team_1_bgr = hex_to_bgr(home_team.get("primary_tshirt_colors")) if home_team.get("primary_tshirt_colors") else TEAM_1_DISPLAY_COLOR
     team_2_bgr = hex_to_bgr(away_team.get("primary_tshirt_colors")) if away_team.get("primary_tshirt_colors") else TEAM_2_DISPLAY_COLOR
@@ -121,7 +125,8 @@ def main():
     
     # 2. Initialize tracking and stats systems
     ball_tracker = BallTracker(BALL_DETECTOR_WEIGHTS, max_missing_frames=BALL_INTERPOLATION_MAX)
-    voter = NumberVotingSystem(required_frames=NUMBER_VOTING_FRAMES)
+    voter      = NumberVotingSystem(required_frames=NUMBER_VOTING_FRAMES)
+    team_voter = TeamVotingSystem(required_frames=8)  # lock team after 8 consistent frames
     stats_tracker = MatchStats(
         team_1_name=team_1_name, team_2_name=team_2_name,
         team_1_color=team_1_bgr, team_2_color=team_2_bgr
@@ -237,8 +242,14 @@ def main():
         players_data = []
         
         for track_id, bbox in tracked_players:
-            # تحديد الفريق (مع عزل النجيلة)
-            team_name, box_color = team_classifier.get_player_team(frame, bbox)
+            # ── Team classification with sticky locking ────────────────
+            # If already locked, skip the classifier entirely (saves compute
+            # and prevents lighting changes from flipping the team label).
+            if team_voter.is_locked(track_id):
+                team_name, box_color = team_voter.get_locked(track_id)
+            else:
+                raw_team, raw_color = team_classifier.get_player_team(frame, bbox)
+                team_name, box_color = team_voter.update(track_id, raw_team, raw_color)
             
             # قراءة وتثبيت الرقم
             if track_id in voter.final_numbers:

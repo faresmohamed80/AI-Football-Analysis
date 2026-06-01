@@ -7,49 +7,77 @@ from src.config import API_BASE_URL, SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET
 
 def hex_to_hsv(hex_color):
     """
-    Converts a hex color string (e.g. '#ffffff' or 'ffffff') to an OpenCV HSV range.
-    Returns: {"lower": [h, s, v], "upper": [h, s, v]}
+    Converts a hex color string (e.g. '#ffffff' or 'ffffff') to a LIST of OpenCV
+    HSV ranges covering all lighting variants of that color:
+      - Normal light
+      - Shadow (darker, less saturated)
+      - Overexposed highlight (brighter, lower saturation)
+
+    Returns: [{"lower": [...], "upper": [...]}, ...] or None on failure.
     """
     if hex_color is None or hex_color == "NULL" or not isinstance(hex_color, str):
         return None
-    
+
     hex_color = hex_color.strip().lstrip('#')
     if len(hex_color) != 6:
         return None
-        
+
     try:
-        # Convert hex to RGB
         r = int(hex_color[0:2], 16)
         g = int(hex_color[2:4], 16)
         b = int(hex_color[4:6], 16)
     except ValueError:
         return None
-    
-    # Convert RGB to HSV using cv2
-    color_rgb = np.uint8([[[b, g, r]]])  # OpenCV uses BGR
-    color_hsv = cv2.cvtColor(color_rgb, cv2.COLOR_BGR2HSV)[0][0]
-    
+
+    # Convert RGB to HSV via cv2 (input must be BGR)
+    color_bgr = np.uint8([[[b, g, r]]])
+    color_hsv = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2HSV)[0][0]
     h, s, v = int(color_hsv[0]), int(color_hsv[1]), int(color_hsv[2])
-    
-    # Define range (heuristics for robust detection)
-    # White/Black/Gray have low saturation or extreme value
-    if s < 30 and v > 200: # White
-        # Stricter white to avoid picking up glare on colored shirts
-        lower = [0, 0, 180]
-        upper = [180, 45, 255]
-    elif v < 50: # Black
-        lower = [0, 0, 0]
-        upper = [180, 255, 60]
-    else:
-        # Normal color: Hue is the most important part.
-        # Video colors are often desaturated and dark in shadows.
-        # We use a wide Hue range (+/- 20) to catch all variations of the color.
-        lower_h = max(0, h - 20)
-        upper_h = min(180, h + 20)
-        lower = [lower_h, 35, 35]  # Very forgiving for shadows/lighting (all dark/pale shades)
-        upper = [upper_h, 255, 255]
-        
-    return {"lower": lower, "upper": upper}
+
+    # ── Special cases: achromatic colours ─────────────────────────────
+    if s < 30 and v > 200:  # White
+        return [
+            {"lower": [0,   0,  175], "upper": [180, 50,  255]},  # Normal white
+            {"lower": [0,   0,  130], "upper": [180, 80,  200]},  # White in shadow
+        ]
+
+    if v < 60:  # Black / very dark
+        return [
+            {"lower": [0,   0,   0],  "upper": [15,  255, 60]},   # Dark (reddish-black)
+            {"lower": [160, 0,   0],  "upper": [180, 255, 60]},   # Dark (wrap-around)
+            {"lower": [86,  0,   0],  "upper": [159, 255, 60]},   # Dark blues/purples
+            {"lower": [0,   0,   0],  "upper": [180, 40,  60]},   # Desaturated darks
+        ]
+
+    # ── Normal / saturated colour ─────────────────────────────────────
+    H_TOL   = 18   # Hue tolerance (degrees) – covers camera/WB shifts
+    lower_h = max(0,   h - H_TOL)
+    upper_h = min(180, h + H_TOL)
+
+    ranges = [
+        # Normal lighting
+        {"lower": [lower_h, 50,  60],  "upper": [upper_h, 255, 255]},
+        # Deep shadow – same hue, low V and low S
+        {"lower": [lower_h, 25,  20],  "upper": [upper_h, 180, 110]},
+        # Overexposed / washed-out – very low S, high V
+        {"lower": [lower_h, 15,  160], "upper": [upper_h,  90, 255]},
+    ]
+
+    # Handle hue wrap-around (e.g. red: h near 0 or 180)
+    if lower_h < H_TOL:  # hue wraps below 0
+        wrap_h = 180 + lower_h
+        ranges += [
+            {"lower": [wrap_h, 50,  60],  "upper": [180,    255, 255]},
+            {"lower": [wrap_h, 25,  20],  "upper": [180,    180, 110]},
+        ]
+    if upper_h > 180 - H_TOL:  # hue wraps above 180
+        wrap_h = upper_h - 180
+        ranges += [
+            {"lower": [0, 50,  60],  "upper": [wrap_h, 255, 255]},
+            {"lower": [0, 25,  20],  "upper": [wrap_h, 180, 110]},
+        ]
+
+    return ranges
 
 def hex_to_bgr(hex_color):
     """
