@@ -60,33 +60,33 @@ class TeamClassifier:
         if shirt_crop.size == 0: shirt_crop = player_crop
 
         hsv_crop = cv2.cvtColor(shirt_crop, cv2.COLOR_BGR2HSV)
-
-        # Calculate pixels for Team 1
-        team_1_pixels = 0
-        for lower, upper in self.team_1_ranges:
-            mask = cv2.inRange(hsv_crop, lower, upper)
-            team_1_pixels += cv2.countNonZero(mask)
-
-        # Calculate pixels for Team 2
-        team_2_pixels = 0
-        for lower, upper in self.team_2_ranges:
-            mask = cv2.inRange(hsv_crop, lower, upper)
-            team_2_pixels += cv2.countNonZero(mask)
-            
-        # Calculate pixels for Referee
-        referee_pixels = 0
-        for lower, upper in self.referee_ranges:
-            mask = cv2.inRange(hsv_crop, lower, upper)
-            referee_pixels += cv2.countNonZero(mask)
-
-        max_pixels = max(team_1_pixels, team_2_pixels, referee_pixels)
-
-        if max_pixels < TEAM_PIXEL_THRESHOLD:
+        total_pixels = hsv_crop.shape[0] * hsv_crop.shape[1]
+        if total_pixels == 0:
             return "Unknown", self.box_colors["Unknown"]
 
-        if max_pixels == referee_pixels:
+        # Calculate pixel RATIO for each team (normalised by crop size)
+        # Using ratio makes classification stable regardless of player size in frame
+        def _pixel_ratio(ranges):
+            count = 0
+            for lower, upper in ranges:
+                mask = cv2.inRange(hsv_crop, lower, upper)
+                count += cv2.countNonZero(mask)
+            return count / total_pixels  # 0.0 – 1.0
+
+        team_1_ratio   = _pixel_ratio(self.team_1_ranges)
+        team_2_ratio   = _pixel_ratio(self.team_2_ranges)
+        referee_ratio  = _pixel_ratio(self.referee_ranges)
+
+        max_ratio = max(team_1_ratio, team_2_ratio, referee_ratio)
+
+        # Require at least 5% matching pixels AND more than TEAM_PIXEL_THRESHOLD raw pixels
+        MIN_RATIO = 0.05
+        if max_ratio < MIN_RATIO:
+            return "Unknown", self.box_colors["Unknown"]
+
+        if max_ratio == referee_ratio:
             return "Referee", self.box_colors["Referee"]
-        elif max_pixels == team_1_pixels:
+        elif max_ratio == team_1_ratio:
             return self.team_1_name, self.box_colors[self.team_1_name]
         else:
             return self.team_2_name, self.box_colors[self.team_2_name]

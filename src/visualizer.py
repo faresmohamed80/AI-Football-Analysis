@@ -76,6 +76,26 @@ class Visualizer:
             )
             frame = ellipse_ann.annotate(scene=frame, detections=det)
 
+            # Add a white outline ellipse behind dark-coloured teams so the ellipse
+            # is always visible (e.g., black jerseys on dark background)
+            needs_outline = [
+                i for i, c in enumerate(raw_bgr)
+                if (int(c[0]) + int(c[1]) + int(c[2])) < 150  # dark colour threshold
+            ]
+            if needs_outline:
+                outline_det = det[needs_outline]
+                white_palette = sv.ColorPalette(
+                    colors=[sv.Color(r=240, g=240, b=240)] * len(needs_outline)
+                )
+                outline_ann = sv.EllipseAnnotator(
+                    color=white_palette,
+                    thickness=1,
+                    start_angle=-45,
+                    end_angle=235,
+                    color_lookup=sv.ColorLookup.INDEX,
+                )
+                frame = outline_ann.annotate(scene=frame, detections=outline_det)
+
             # ── 2. Labels: always dark background + white text ──────────
             # Build a dark-grey palette so labels are always readable,
             # regardless of team colour (fixes white-on-white issue).

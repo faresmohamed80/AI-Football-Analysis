@@ -73,26 +73,31 @@ BALL_TRAIL_THICKNESS = 3     # Max thickness of trail line at newest point
 # ─────────────────────────────────────────────────────────
 # 7. Team Classification Settings
 # ─────────────────────────────────────────────────────────
-TEAM_PIXEL_THRESHOLD = 5    # Min pixels to identify a team color
-SHIRT_CROP_HEIGHT_RATIO = (0.1, 0.5) # Top/Bottom ratio for shirt crop
-SHIRT_CROP_WIDTH_RATIO = (0.2, 0.8)  # Left/Right ratio for shirt crop
+TEAM_PIXEL_THRESHOLD = 20   # Min pixels to identify a team color (raised to reduce noise misclassification)
+SHIRT_CROP_HEIGHT_RATIO = (0.10, 0.45) # Top/Bottom ratio for shirt crop (tighter to focus on torso/shirt)
+SHIRT_CROP_WIDTH_RATIO = (0.25, 0.75)  # Left/Right ratio for shirt crop (tighter to avoid background bleed)
 
 # ─────────────────────────────────────────────────────────
 # 8. Team Color Ranges (HSV)
 # ─────────────────────────────────────────────────────────
-# Team 1 (Black)
+# Team 1 (Black) - Tightened to avoid dark shadows and dark green pitch
+# Exclude very dark greens by capping Hue away from green (35-85)
 TEAM_1_HSV = [
-    {"lower": [0, 0, 0],      "upper": [180, 255, 60]}   # Black
+    {"lower": [0,   0,   0],   "upper": [15,  255, 55]},  # Dark reds/browns (black)
+    {"lower": [160, 0,   0],   "upper": [180, 255, 55]},  # Dark reds wrap-around
+    {"lower": [86, 0,   0],   "upper": [159, 255, 55]},  # Dark blues/purples (black)
+    {"lower": [0,   0,   0],   "upper": [34,  60,  55]},  # Neutral low-sat darks
+    {"lower": [0,   0,   0],   "upper": [180, 30,  50]},  # Very low saturation darks
 ]
 
-# Team 2 (White)
+# Team 2 (White) - Tightened to avoid bright pitch highlights
 TEAM_2_HSV = [
-    {"lower": [0, 0, 160],    "upper": [180, 60, 255]}  # White
+    {"lower": [0,   0,  185],  "upper": [180, 45, 255]},  # Pure whites (very low saturation)
 ]
 
-# Referee (Green)
+# Referee (Green) - Expanded slightly for different shades
 REFEREE_HSV = [
-    {"lower": [35, 40, 40],   "upper": [85, 255, 255]}  # Green
+    {"lower": [35, 50, 50],   "upper": [85, 255, 220]}  # Green (exclude very bright = pitch lines)
 ]
 
 # Team Names
@@ -100,10 +105,11 @@ TEAM_1_NAME = "Black Team"
 TEAM_2_NAME = "White Team"
 
 # Team Display Colors (BGR)
-TEAM_1_DISPLAY_COLOR = (0, 0, 0)        # Black BGR
-TEAM_2_DISPLAY_COLOR = (255, 255, 255)  # White BGR
+# Note: Pure black (0,0,0) is invisible on dark backgrounds → use dark charcoal
+TEAM_1_DISPLAY_COLOR = (40, 40, 40)       # Near-Black BGR (visible on radar/ellipse)
+TEAM_2_DISPLAY_COLOR = (255, 255, 255)    # White BGR
 
-REFEREE_DISPLAY_COLOR = (0, 255, 0)     # Green BGR
+REFEREE_DISPLAY_COLOR = (0, 200, 50)      # Bright Green BGR
 
 # ─────────────────────────────────────────────────────────
 # 9. Visualization Settings
