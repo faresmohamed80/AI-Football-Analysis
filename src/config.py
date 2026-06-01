@@ -80,32 +80,30 @@ SHIRT_CROP_WIDTH_RATIO = (0.2, 0.8)  # Left/Right ratio for shirt crop
 # ─────────────────────────────────────────────────────────
 # 8. Team Color Ranges (HSV)
 # ─────────────────────────────────────────────────────────
-# Team 1 (White + Black Goalkeeper)
+# Team 1 (Black)
 TEAM_1_HSV = [
-    {"lower": [0, 0, 160],    "upper": [180, 60, 255]},  # White
-    {"lower": [0, 0, 0],      "upper": [180, 255, 50]}   # Black GK
+    {"lower": [0, 0, 0],      "upper": [180, 255, 60]}   # Black
 ]
 
-# Team 2 (Blue + Blue GK)
+# Team 2 (White)
 TEAM_2_HSV = [
-    {"lower": [100, 50, 50],  "upper": [130, 255, 255]},  # Blue
-    {"lower": [100, 30, 30],  "upper": [130, 255, 200]}   # Dark Blue GK
+    {"lower": [0, 0, 160],    "upper": [180, 60, 255]}  # White
 ]
 
-# Referee (Black)
+# Referee (Green)
 REFEREE_HSV = [
-    {"lower": [0, 0, 0],      "upper": [180, 255, 50]}   # Black
+    {"lower": [35, 40, 40],   "upper": [85, 255, 255]}  # Green
 ]
 
 # Team Names
-TEAM_1_NAME = "White Team"
-TEAM_2_NAME = "Blue Team"
+TEAM_1_NAME = "Black Team"
+TEAM_2_NAME = "White Team"
 
 # Team Display Colors (BGR)
-TEAM_1_DISPLAY_COLOR = (255, 255, 255)  # White
-TEAM_2_DISPLAY_COLOR = (255, 100, 0)    # Blue (BGR)
+TEAM_1_DISPLAY_COLOR = (0, 0, 0)        # Black BGR
+TEAM_2_DISPLAY_COLOR = (255, 255, 255)  # White BGR
 
-REFEREE_DISPLAY_COLOR = (0, 0, 0)     # Black
+REFEREE_DISPLAY_COLOR = (0, 255, 0)     # Green BGR
 
 # ─────────────────────────────────────────────────────────
 # 9. Visualization Settings
