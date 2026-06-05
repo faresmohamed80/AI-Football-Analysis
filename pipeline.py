@@ -170,7 +170,7 @@ def main():
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # نرجع الفيديو للأول تاني
 
     # تهيئة رادار الملعب
-    radar_seg = PitchRadar(frame_w=w, frame_h=h, radar_w=400, radar_h=240)
+    radar_seg = PitchRadar(frame_w=w, frame_h=h, radar_w=280, radar_h=168)
     
     # 🔴 Semantic Mapper
     semantic_mapper = SemanticPitchMapper(

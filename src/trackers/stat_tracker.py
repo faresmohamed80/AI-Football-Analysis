@@ -406,32 +406,38 @@ class MatchStats:
         t1_pct = stats[self.team_1_name]
         t2_pct = stats[self.team_2_name]
 
-        x, y, w, h = 20, 20, 340, 130
+        # Dynamically size HUD height based on whether action is active
+        has_action = (self.action_display_frames > 0 and self.current_action)
+        w = 260
+        h = 102 if has_action else 82
+        x, y = 20, 20
+
         overlay = frame.copy()
         cv2.rectangle(overlay, (x, y), (x + w, y + h), (20, 20, 20), -1)
         cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
-        cv2.rectangle(frame, (x, y), (x + 6, y + h), (0, 215, 255), -1)
+        cv2.rectangle(frame, (x, y), (x + 4, y + h), (0, 215, 255), -1)
 
+        cv2.putText(frame, "LIVE MATCH STATS",
+                    (x + 15, y + 18), cv2.FONT_HERSHEY_DUPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+        
+        poss_text = f"{self.team_1_name[:10]} {t1_pct}% | {self.team_2_name[:10]} {t2_pct}%"
+        cv2.putText(frame, poss_text,
+                    (x + 15, y + 38), cv2.FONT_HERSHEY_DUPLEX, 0.35, (200, 200, 200), 1, cv2.LINE_AA)
 
-        cv2.putText(frame, "L I V E  M A T C H  S T A T S",
-                    (x + 20, y + 25), cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(frame, f"Possession: {self.team_1_name} {t1_pct}% | {self.team_2_name} {t2_pct}%",
-                    (x + 20, y + 55), cv2.FONT_HERSHEY_DUPLEX, 0.42, (200, 200, 200), 1, cv2.LINE_AA)
-
-        bar_y = y + 68
-        cv2.rectangle(frame, (x + 20, bar_y), (x + w - 20, bar_y + 6), (220, 220, 220), -1)
-        t1_w = int((w - 40) * t1_pct / 100)
+        bar_y = y + 46
+        cv2.rectangle(frame, (x + 15, bar_y), (x + w - 15, bar_y + 4), (220, 220, 220), -1)
+        t1_w = int((w - 30) * t1_pct / 100)
         if t1_w > 0:
-            cv2.rectangle(frame, (x + 20, bar_y), (x + 20 + t1_w, bar_y + 6), self.team_1_color, -1)
+            cv2.rectangle(frame, (x + 15, bar_y), (x + 15 + t1_w, bar_y + 4), self.team_1_color, -1)
 
         cv2.putText(frame, f"Ball: {self.current_possessor}",
-                    (x + 20, y + 95), cv2.FONT_HERSHEY_DUPLEX, 0.42, (0, 215, 255), 1, cv2.LINE_AA)
+                    (x + 15, y + 70), cv2.FONT_HERSHEY_DUPLEX, 0.35, (0, 215, 255), 1, cv2.LINE_AA)
 
         # Action Display
-        if self.action_display_frames > 0 and self.current_action:
+        if has_action:
             action_text = f"Action: {self.current_action} ({self.current_action_conf:.2f})"
             cv2.putText(frame, action_text,
-                        (x + 20, y + 115), cv2.FONT_HERSHEY_DUPLEX, 0.42, (255, 100, 255), 1, cv2.LINE_AA)
+                        (x + 15, y + 90), cv2.FONT_HERSHEY_DUPLEX, 0.35, (255, 100, 255), 1, cv2.LINE_AA)
 
 
         # Pop-up alert

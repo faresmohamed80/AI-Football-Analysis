@@ -56,7 +56,7 @@ class PitchRadar:
         # ── Pitch lines ───────────────────────────────────────────────
         cv2.rectangle(radar_img, (0, 0), (self.radar_w, self.radar_h), (255, 255, 255), 2)
         cv2.line(radar_img, (self.radar_w // 2, 0), (self.radar_w // 2, self.radar_h), (255, 255, 255), 1)
-        cv2.circle(radar_img, (self.radar_w // 2, self.radar_h // 2), 35, (255, 255, 255), 1)
+        cv2.circle(radar_img, (self.radar_w // 2, self.radar_h // 2), int(self.radar_h * 0.134), (255, 255, 255), 1)
 
         # Default team colors if not provided
         c1 = team_1_color if team_1_color else (255,  50,  50)   # blue-ish
@@ -96,19 +96,19 @@ class PitchRadar:
 
             if team == "Referee":
                 # Referee → bright orange
-                cv2.circle(radar_img, (rx, ry), 5, (0, 165, 255), -1, cv2.LINE_AA)
-                cv2.circle(radar_img, (rx, ry), 7, (0, 0, 0), 1, cv2.LINE_AA)
+                cv2.circle(radar_img, (rx, ry), 3, (0, 165, 255), -1, cv2.LINE_AA)
+                cv2.circle(radar_img, (rx, ry), 4, (0, 0, 0), 1, cv2.LINE_AA)
             elif team == team_1_name:
-                cv2.circle(radar_img, (rx, ry), 6, c1_radar, -1, cv2.LINE_AA)
-                cv2.circle(radar_img, (rx, ry), 8, (220, 220, 220), 1, cv2.LINE_AA)
-                cv2.circle(radar_img, (rx, ry), 9, (0, 0, 0), 1, cv2.LINE_AA)
+                cv2.circle(radar_img, (rx, ry), 4, c1_radar, -1, cv2.LINE_AA)
+                cv2.circle(radar_img, (rx, ry), 5, (220, 220, 220), 1, cv2.LINE_AA)
+                cv2.circle(radar_img, (rx, ry), 6, (0, 0, 0), 1, cv2.LINE_AA)
             elif team == team_2_name:
-                cv2.circle(radar_img, (rx, ry), 6, c2_radar, -1, cv2.LINE_AA)
-                cv2.circle(radar_img, (rx, ry), 8, (80, 80, 80), 1, cv2.LINE_AA)
-                cv2.circle(radar_img, (rx, ry), 9, (0, 0, 0), 1, cv2.LINE_AA)
+                cv2.circle(radar_img, (rx, ry), 4, c2_radar, -1, cv2.LINE_AA)
+                cv2.circle(radar_img, (rx, ry), 5, (80, 80, 80), 1, cv2.LINE_AA)
+                cv2.circle(radar_img, (rx, ry), 6, (0, 0, 0), 1, cv2.LINE_AA)
             else:
                 # Unknown → grey
-                cv2.circle(radar_img, (rx, ry), 4, (150, 150, 150), -1, cv2.LINE_AA)
+                cv2.circle(radar_img, (rx, ry), 3, (150, 150, 150), -1, cv2.LINE_AA)
 
         # ── Ball ──────────────────────────────────────────────────────
         if ball_data is not None:
@@ -122,24 +122,24 @@ class PitchRadar:
                 ry = int(transformed[0][0][1]) + self.dy
                 if 0 <= rx <= self.radar_w and 0 <= ry <= self.radar_h:
                     ball_color = (0, 200, 255) if is_interpolated else (0, 255, 255)
-                    cv2.circle(radar_img, (rx, ry), 5, ball_color, -1, cv2.LINE_AA)
-                    cv2.circle(radar_img, (rx, ry), 7, (0, 0, 0), 1, cv2.LINE_AA)
+                    cv2.circle(radar_img, (rx, ry), 3, ball_color, -1, cv2.LINE_AA)
+                    cv2.circle(radar_img, (rx, ry), 4, (0, 0, 0), 1, cv2.LINE_AA)
 
         # ── Legend ────────────────────────────────────────────────────
-        leg_y = self.radar_h - 18
-        cv2.circle(radar_img, (8, leg_y), 5, c1_radar, -1)
-        cv2.circle(radar_img, (8, leg_y), 7, (200, 200, 200), 1)
-        cv2.putText(radar_img, team_1_name[:10], (17, leg_y + 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.32, (255, 255, 255), 1)
-        cv2.circle(radar_img, (8 + self.radar_w // 2, leg_y), 5, c2_radar, -1)
-        cv2.circle(radar_img, (8 + self.radar_w // 2, leg_y), 7, (60, 60, 60), 1)
-        cv2.putText(radar_img, team_2_name[:10], (17 + self.radar_w // 2, leg_y + 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.32, (255, 255, 255), 1)
+        leg_y = self.radar_h - 12
+        cv2.circle(radar_img, (8, leg_y), 4, c1_radar, -1)
+        cv2.circle(radar_img, (8, leg_y), 5, (200, 200, 200), 1)
+        cv2.putText(radar_img, team_1_name[:10], (17, leg_y + 3),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+        cv2.circle(radar_img, (8 + self.radar_w // 2, leg_y), 4, c2_radar, -1)
+        cv2.circle(radar_img, (8 + self.radar_w // 2, leg_y), 5, (60, 60, 60), 1)
+        cv2.putText(radar_img, team_2_name[:10], (17 + self.radar_w // 2, leg_y + 3),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
 
         # ── Title ─────────────────────────────────────────────────────
         if title:
-            cv2.putText(radar_img, title, (10, 18), cv2.FONT_HERSHEY_DUPLEX,
-                        0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(radar_img, title, (10, 15), cv2.FONT_HERSHEY_DUPLEX,
+                        0.4, (255, 255, 255), 1, cv2.LINE_AA)
 
         # ── Overlay on frame ──────────────────────────────────────────
         h, w = frame.shape[:2]
