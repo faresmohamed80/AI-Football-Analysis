@@ -51,6 +51,24 @@ def main():
     mode_label = "🖥️  LOCAL" if run_local else "☁️  BACKEND"
     print(f"\n  ✅ Running in {mode_label} mode\n")
 
+    # ── Option to use Pitch Radar ──────────────────────────────────────
+    import sys
+    use_radar = SHOW_RADAR
+    if "--no-radar" in sys.argv:
+        use_radar = False
+        print("  📡 Radar disabled via command-line argument.")
+    elif "--radar" in sys.argv:
+        use_radar = True
+        print("  📡 Radar enabled via command-line argument.")
+    else:
+        print("═"*50)
+        print("  📡 Pitch Radar Configuration")
+        print("═"*50)
+        choice_radar = input("  Enable Pitch Radar? (y/n) [y]: ").strip().lower()
+        use_radar = choice_radar not in ('n', 'no')
+    radar_label = "✅ ENABLED" if use_radar else "❌ DISABLED"
+    print(f"  📡 Pitch Radar is {radar_label}\n")
+
     print("⚙️ Loading models and systems... Please wait.")
     
     # --- API Integration: Fetch Match Data ---
@@ -138,8 +156,11 @@ def main():
     model_player_actions = defaultdict(Counter)
     model_team_actions = defaultdict(Counter)
     
-    # 🔴 Loading stadium segmentation model for radar
-    pitch_segmenter = YOLO(STADIUM_SEGMENTER_WEIGHTS)
+    # 🔴 Loading stadium segmentation model for radar (only if enabled)
+    pitch_segmenter = None
+    if use_radar:
+        print("🧠 Loading stadium segmentation model for radar...")
+        pitch_segmenter = YOLO(STADIUM_SEGMENTER_WEIGHTS)
 
     # 4. Open input video
     cap = cv2.VideoCapture(INPUT_VIDEO_PATH)
@@ -166,8 +187,7 @@ def main():
     ret, first_frame = cap.read()
     if not ret: return
     h, w = first_frame.shape[:2]
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)                     "primary_tshirt_colors": None,
- # نرجع الفيديو للأول تاني
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # نرجع الفيديو للأول تاني
 
     # تهيئة رادار الملعب
     radar_seg = PitchRadar(frame_w=w, frame_h=h, radar_w=280, radar_h=168)
