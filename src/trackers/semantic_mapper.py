@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from src.config import PITCH_LENGTH
 
 class SemanticPitchMapper:
     def __init__(self, radar_w=500, radar_h=300, smoothing=0.15):
@@ -9,7 +10,7 @@ class SemanticPitchMapper:
         # الأبعاد الرياضية الحقيقية للرادار
         self.mid_x = radar_w / 2.0        
         self.mid_y = radar_h / 2.0        
-        self.box18_w = (16.5/105.0) * radar_w  
+        self.box18_w = (6.0/PITCH_LENGTH) * radar_w  
         
         # التخزين المؤقت للإزاحة (النعومة) Temporal Smoothing
         self.current_dx = 0.0

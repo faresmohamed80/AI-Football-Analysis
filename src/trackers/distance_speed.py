@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 from collections import defaultdict
+from src.config import PITCH_LENGTH, PITCH_WIDTH, RADAR_WIDTH, RADAR_HEIGHT
 
 class SpeedDistanceTracker:
     def __init__(self, fps, homography_matrix=None, pixel_to_meter=0.02):
@@ -16,7 +17,7 @@ class SpeedDistanceTracker:
         # 🔥 history للـ smoothing
         self.speed_history = defaultdict(list)
 
-    def convert_position(self, point, homography_matrix=None, dx=0, dy=0, radar_w=400, radar_h=240):
+    def convert_position(self, point, homography_matrix=None, dx=0, dy=0, radar_w=RADAR_WIDTH, radar_h=RADAR_HEIGHT):
         # 🔥 dynamic homography if provided (moving camera compensation)
         if homography_matrix is not None:
             x, y = point
@@ -24,9 +25,9 @@ class SpeedDistanceTracker:
             transformed = cv2.perspectiveTransform(pt, homography_matrix)
             rx = transformed[0][0][0] + dx
             ry = transformed[0][0][1] + dy
-            px = (rx / float(radar_w)) * 105.0
-            py = (ry / float(radar_h)) * 68.0
-            return (float(np.clip(px, 0.0, 105.0)), float(np.clip(py, 0.0, 68.0)))
+            px = (rx / float(radar_w)) * PITCH_LENGTH
+            py = (ry / float(radar_h)) * PITCH_WIDTH
+            return (float(np.clip(px, 0.0, PITCH_LENGTH)), float(np.clip(py, 0.0, PITCH_WIDTH)))
 
         # Fallback to static homography
         if self.homography_matrix is not None:

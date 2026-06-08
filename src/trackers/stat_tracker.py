@@ -10,6 +10,10 @@ from src.config import (
     TEAM_2_NAME,
     TEAM_1_DISPLAY_COLOR,
     TEAM_2_DISPLAY_COLOR,
+    PITCH_LENGTH,
+    PITCH_WIDTH,
+    RADAR_WIDTH,
+    RADAR_HEIGHT,
 )
 
 
@@ -109,17 +113,17 @@ class MatchStats:
         fx1, fy1, fx2, fy2 = MatchStats._feet_zone(bbox)
         return fx1 <= ball_cx <= fx2 and fy1 <= ball_cy <= fy2
 
-    def _to_pitch_coords(self, x, y, matrix, dx, dy, radar_w=400, radar_h=240):
+    def _to_pitch_coords(self, x, y, matrix, dx, dy, radar_w=RADAR_WIDTH, radar_h=RADAR_HEIGHT):
         if matrix is None:
             # Fallback mapping (image relative coordinates to pitch size)
-            return float((x / 1920.0) * 105.0), float((y / 1080.0) * 68.0)
+            return float((x / 1920.0) * PITCH_LENGTH), float((y / 1080.0) * PITCH_WIDTH)
         pt = np.array([[[x, y]]], dtype=np.float32)
         transformed = cv2.perspectiveTransform(pt, matrix)
         rx = transformed[0][0][0] + dx
         ry = transformed[0][0][1] + dy
-        px = (rx / float(radar_w)) * 105.0
-        py = (ry / float(radar_h)) * 68.0
-        return float(np.clip(px, 0.0, 105.0)), float(np.clip(py, 0.0, 68.0))
+        px = (rx / float(radar_w)) * PITCH_LENGTH
+        py = (ry / float(radar_h)) * PITCH_WIDTH
+        return float(np.clip(px, 0.0, PITCH_LENGTH)), float(np.clip(py, 0.0, PITCH_WIDTH))
 
     def _classify_and_record_action(self, from_tid, from_team, from_name, to_tid, to_team, to_name, curr_x, curr_y):
         """Classifies the possession transition between two players using rules."""
@@ -136,38 +140,38 @@ class MatchStats:
         # 1. SHOT: high speed towards opponent's goal
         is_shot_trajectory = False
         if is_team1:
-            if curr_x > kx and kx > 50.0:
+            if curr_x > kx and kx > (PITCH_LENGTH / 2.0):
                 is_shot_trajectory = True
         else:
-            if curr_x < kx and kx < 55.0:
+            if curr_x < kx and kx < (PITCH_LENGTH / 2.0):
                 is_shot_trajectory = True
 
-        if is_shot_trajectory and max_speed > 13.0:
+        if is_shot_trajectory and max_speed > 10.0:
             action = "SHOT"
-            confidence = min(0.98, 0.70 + (max_speed - 13.0) * 0.02)
+            confidence = min(0.98, 0.70 + (max_speed - 10.0) * 0.02)
         
         # 2. CLEARANCE: high speed from defensive area
-        elif max_speed > 12.0 and dist > 20.0:
-            is_defensive_zone = (kx < 35.0) if is_team1 else (kx > 70.0)
+        elif max_speed > 8.0 and dist > 8.0:
+            is_defensive_zone = (kx < (PITCH_LENGTH / 3.0)) if is_team1 else (kx > (2.0 * PITCH_LENGTH / 3.0))
             if is_defensive_zone:
                 action = "CLEARANCE"
                 confidence = 0.85
 
         # 3. CROSS: from wide area to opponent's penalty box
-        elif (ky < 16.0 or ky > 52.0) and dist > 15.0:
+        elif (ky < 4.5 or ky > 15.5) and dist > 7.0:
             in_opponent_box = False
             if is_team1:
-                if curr_x > 85.0 and 12.0 < curr_y < 56.0:
+                if curr_x > 34.0 and 4.0 < curr_y < 16.0:
                     in_opponent_box = True
             else:
-                if curr_x < 20.0 and 12.0 < curr_y < 56.0:
+                if curr_x < 6.0 and 4.0 < curr_y < 16.0:
                     in_opponent_box = True
             if in_opponent_box:
                 action = "CROSS"
                 confidence = 0.88
 
         # 4. HIGH_PASS: long pass
-        elif dist > 22.0:
+        elif dist > 10.0:
             action = "HIGH_PASS"
             confidence = 0.85
 

@@ -54,6 +54,12 @@ MAX_BALL_SPEED_FOR_DRIBBLING = 18
 FEET_ZONE_HEIGHT_RATIO = 0.40   # Bottom 40% of player bbox = feet/legs area
 FEET_ZONE_WIDTH_EXPANSION = 0.15 # Expand bbox width by 15% on each side for ball tolerance
 
+# 5-a-side Pitch and Radar Dimensions
+PITCH_LENGTH = 40.0             # Real-world pitch length (meters)
+PITCH_WIDTH = 20.0              # Real-world pitch width (meters)
+RADAR_WIDTH = 280               # Width of the drawn radar
+RADAR_HEIGHT = 168              # Height of the drawn radar
+
 # ─────────────────────────────────────────────────────────
 # 7. Smoothing & Filtering Settings
 # ─────────────────────────────────────────────────────────

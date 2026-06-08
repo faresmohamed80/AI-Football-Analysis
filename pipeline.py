@@ -190,7 +190,7 @@ def main():
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # نرجع الفيديو للأول تاني
 
     # تهيئة رادار الملعب
-    radar_seg = PitchRadar(frame_w=w, frame_h=h, radar_w=280, radar_h=168)
+    radar_seg = PitchRadar(frame_w=w, frame_h=h, radar_w=RADAR_WIDTH, radar_h=RADAR_HEIGHT)
     
     # 🔴 Semantic Mapper
     semantic_mapper = SemanticPitchMapper(
@@ -344,7 +344,7 @@ def main():
             # Convert screen coordinates to real pitch coordinates (compensating for moving camera)
             px, py = stats_tracker._to_pitch_coords(feet_x, feet_y, radar_seg.matrix, radar_seg.dx, radar_seg.dy)
             # Store normalized real pitch coordinates (0.0 to 1.0) by track_id (tid)
-            heatmap_positions[tid] = (px / 105.0, py / 68.0)
+            heatmap_positions[tid] = (px / PITCH_LENGTH, py / PITCH_WIDTH)
 
         total_dist, speeds = speed_tracker.update(
             tracks_for_speed,

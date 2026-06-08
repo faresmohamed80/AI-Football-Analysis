@@ -48,6 +48,7 @@ class PitchRadar:
     def draw_radar(self, frame, players_data, ball_data,
                    position="bottom-right", title=None,
                    team_1_color=None, team_2_color=None,
+                   referee_color=None,
                    team_1_name="Team 1", team_2_name="Team 2"):
         # ── Background ────────────────────────────────────────────────
         radar_img = np.zeros((self.radar_h, self.radar_w, 3), dtype=np.uint8)
@@ -95,8 +96,9 @@ class PitchRadar:
                 continue
 
             if team == "Referee":
-                # Referee → bright orange
-                cv2.circle(radar_img, (rx, ry), 3, (0, 165, 255), -1, cv2.LINE_AA)
+                # Referee → use configured referee color (default: yellow)
+                ref_c = referee_color if referee_color is not None else (0, 235, 235)
+                cv2.circle(radar_img, (rx, ry), 3, ref_c, -1, cv2.LINE_AA)
                 cv2.circle(radar_img, (rx, ry), 4, (0, 0, 0), 1, cv2.LINE_AA)
             elif team == team_1_name:
                 cv2.circle(radar_img, (rx, ry), 4, c1_radar, -1, cv2.LINE_AA)
