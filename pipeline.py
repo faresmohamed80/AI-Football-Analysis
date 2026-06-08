@@ -228,6 +228,7 @@ def main():
     track_id_to_name = {}
     track_id_to_team = {}   # track_id → team name (for aggregating team stats)
     prev_closest_player_id = None
+    prev_ball_pos = None
 
     # 5. Main loop for processing frame by frame
     while True:
@@ -328,42 +329,8 @@ def main():
         prev_closest_player_id = closest_player_id
 
         # ---------------------------------------------------------
-        # ج. حساب الإحصائيات (الاستحواذ + السرعة + الهيت ماب) 📊
+        # ج. حساب السرعة والمسافة أولاً لتكون متوفرة للأكشن 📊
         # ---------------------------------------------------------
-        prev_possessor_tid = stats_tracker.possessor_tid
-        stats_tracker.update(players_data, ball_data, radar_seg.matrix, radar_seg.dx, radar_seg.dy)
-        new_possessor_tid = stats_tracker.possessor_tid
-
-        # Clear action buffer for the player who JUST LOST the closest-to-ball role
-        if prev_closest_player_id is not None and prev_closest_player_id != closest_player_id:
-            action_recognizer.clear_player(prev_closest_player_id)
-
-        # Run deep learning action recognition on the player CLOSEST TO THE BALL
-        # (crops the closest player's bbox for tighter, more accurate action context)
-        if closest_player_id is not None:
-            closest_p = next((p for p in players_data if p['track_id'] == closest_player_id), None)
-            if closest_p:
-                # update() returns a result ONLY when a new 32-frame inference completes
-                action_res = action_recognizer.update(closest_player_id, frame, closest_p['bbox'])
-                if action_res:
-                    # New inference completed → count it once
-                    action_label, confidence = action_res
-                    model_player_actions[closest_player_id][action_label] += 1
-                    t_name = closest_p['team']
-                    if t_name not in ('Referee', 'Unknown'):
-                        model_team_actions[t_name][action_label] += 1
-
-                # Use get_last_action() for HUD display (doesn't affect counting)
-                last_action = action_recognizer.get_last_action(closest_player_id)
-                if last_action:
-                    stats_tracker.current_action      = last_action[0]
-                    stats_tracker.current_action_conf = last_action[1]
-                    stats_tracker.action_display_frames = max(
-                        stats_tracker.action_display_frames, 30
-                    )
-
-
-        # تحديث تتبع السرعة والمسافة
         tracks_for_speed = {}
         heatmap_positions = {}
         for p in players_data:
@@ -386,6 +353,60 @@ def main():
             dy=radar_seg.dy
         )
         heatmap_tracker.update(heatmap_positions)
+
+        # ── حساب سرعة الكرة بالملعب الحقيقي ⚽ ──
+        ball_speed = 0.0
+        if ball_cx is not None:
+            b_px, b_py = stats_tracker._to_pitch_coords(
+                ball_cx, ball_cy, radar_seg.matrix, radar_seg.dx, radar_seg.dy
+            )
+            if prev_ball_pos is not None:
+                pbx, pby = prev_ball_pos
+                ball_dist = ((b_px - pbx)**2 + (b_py - pby)**2)**0.5
+                ball_speed = ball_dist * fps
+            prev_ball_pos = (b_px, b_py)
+        else:
+            prev_ball_pos = None
+
+        # ---------------------------------------------------------
+        # د. حساب الاستحواذ والأكشن الرياضي 🏃‍♂️⚽
+        # ---------------------------------------------------------
+        prev_possessor_tid = stats_tracker.possessor_tid
+        stats_tracker.update(players_data, ball_data, radar_seg.matrix, radar_seg.dx, radar_seg.dy)
+        new_possessor_tid = stats_tracker.possessor_tid
+
+        # Clear action buffer for the player who JUST LOST the closest-to-ball role
+        if prev_closest_player_id is not None and prev_closest_player_id != closest_player_id:
+            action_recognizer.clear_player(prev_closest_player_id)
+
+        # Run deep learning action recognition on the player CLOSEST TO THE BALL
+        # (crops the closest player's bbox for tighter, more accurate action context)
+        if closest_player_id is not None:
+            closest_p = next((p for p in players_data if p['track_id'] == closest_player_id), None)
+            if closest_p:
+                player_speed = speeds.get(closest_player_id, 0.0)
+                # update() returns a result ONLY when a new 32-frame inference completes
+                action_res = action_recognizer.update(
+                    closest_player_id, frame, closest_p['bbox'],
+                    player_speed=player_speed, ball_speed=ball_speed
+                )
+                if action_res:
+                    # New inference completed → count it once (skip "No Action" in stats)
+                    action_label, confidence = action_res
+                    if action_label != "No Action":
+                        model_player_actions[closest_player_id][action_label] += 1
+                        t_name = closest_p['team']
+                        if t_name not in ('Referee', 'Unknown'):
+                            model_team_actions[t_name][action_label] += 1
+
+                # Use get_last_action() for HUD display (doesn't affect counting)
+                last_action = action_recognizer.get_last_action(closest_player_id)
+                if last_action:
+                    stats_tracker.current_action      = last_action[0]
+                    stats_tracker.current_action_conf = last_action[1]
+                    stats_tracker.action_display_frames = max(
+                        stats_tracker.action_display_frames, 30
+                    )
 
         # ---------------------------------------------------------
         # د. الرسم على الفريم (Visualization) 🎨

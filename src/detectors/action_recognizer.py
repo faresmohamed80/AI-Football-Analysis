@@ -46,15 +46,22 @@ class ActionRecognizer:
     # Public API
     # ──────────────────────────────────────────────────────────────
 
-    def update(self, track_id: int, frame: np.ndarray, bbox: tuple):
+    def update(self, track_id: int, frame: np.ndarray, bbox: tuple, player_speed: float = 0.0, ball_speed: float = 0.0):
         """
-        Call every frame for the ball possessor.
+        Call every frame for the ball possessor / closest player.
         Returns (action_label, confidence) ONLY when a brand-new inference
         completes (i.e. every BUFFER_SIZE frames of possession).
         Returns None otherwise — use get_last_action() for HUD display.
         """
         if not self.enabled:
             return None
+
+        # Check if player is inactive (standing still / doing nothing)
+        # Threshold: player speed < 1.0 m/s and ball speed < 3.0 m/s
+        if player_speed < 1.0 and ball_speed < 3.0:
+            self.clear_player(track_id)
+            self._last_action[track_id] = ("No Action", 1.0)
+            return ("No Action", 1.0)
 
         crop = self._crop_player(frame, bbox)
         if crop is None:
