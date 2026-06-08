@@ -73,21 +73,35 @@ class TeamClassifier:
             shirt_crop = player_crop
 
         hsv_crop = cv2.cvtColor(shirt_crop, cv2.COLOR_BGR2HSV)
-        total_pixels = hsv_crop.shape[0] * hsv_crop.shape[1]
-        if total_pixels == 0:
+        if hsv_crop.size == 0:
             return "Unknown", self.box_colors["Unknown"]
 
         # Calculate pixel RATIO for each team (normalised by crop size)
-        def _pixel_ratio(ranges, target_hsv):
-            count = 0
+        def _pixel_ratio(ranges, target_hsv, exclude_green=False):
+            mask = np.zeros(target_hsv.shape[:2], dtype=np.uint8)
             for lower, upper in ranges:
-                mask = cv2.inRange(target_hsv, lower, upper)
-                count += cv2.countNonZero(mask)
-            return count / (target_hsv.shape[0] * target_hsv.shape[1])  # 0.0 – 1.0
+                mask = cv2.bitwise_or(mask, cv2.inRange(target_hsv, lower, upper))
+            
+            if exclude_green:
+                # Mask out grass green (Hue 35 to 90, Saturation > 35, Value > 35)
+                lower_green = np.array([35, 35, 35])
+                upper_green = np.array([90, 255, 255])
+                green_mask = cv2.inRange(target_hsv, lower_green, upper_green)
+                non_green_mask = cv2.bitwise_not(green_mask)
+                
+                # Count matching pixels that are NOT green
+                mask = cv2.bitwise_and(mask, non_green_mask)
+                total = cv2.countNonZero(non_green_mask)
+            else:
+                total = target_hsv.shape[0] * target_hsv.shape[1]
+                
+            if total == 0:
+                return 0.0
+            return cv2.countNonZero(mask) / total
 
-        team_1_ratio   = _pixel_ratio(self.team_1_ranges, hsv_crop)
-        team_2_ratio   = _pixel_ratio(self.team_2_ranges, hsv_crop)
-        referee_ratio  = _pixel_ratio(self.referee_ranges, hsv_crop)
+        team_1_ratio   = _pixel_ratio(self.team_1_ranges, hsv_crop, exclude_green=True)
+        team_2_ratio   = _pixel_ratio(self.team_2_ranges, hsv_crop, exclude_green=True)
+        referee_ratio  = _pixel_ratio(self.referee_ranges, hsv_crop, exclude_green=False)
 
         max_ratio = max(team_1_ratio, team_2_ratio, referee_ratio)
 
@@ -102,9 +116,9 @@ class TeamClassifier:
                 fallback_hsv = cv2.cvtColor(fallback_crop, cv2.COLOR_BGR2HSV)
                 fb_total = fallback_hsv.shape[0] * fallback_hsv.shape[1]
                 if fb_total > 0:
-                    fb_t1  = _pixel_ratio(self.team_1_ranges, fallback_hsv)
-                    fb_t2  = _pixel_ratio(self.team_2_ranges, fallback_hsv)
-                    fb_ref = _pixel_ratio(self.referee_ranges, fallback_hsv)
+                    fb_t1  = _pixel_ratio(self.team_1_ranges, fallback_hsv, exclude_green=True)
+                    fb_t2  = _pixel_ratio(self.team_2_ranges, fallback_hsv, exclude_green=True)
+                    fb_ref = _pixel_ratio(self.referee_ranges, fallback_hsv, exclude_green=False)
                     fb_max = max(fb_t1, fb_t2, fb_ref)
                     if fb_max >= MIN_RATIO:
                         max_ratio = fb_max
