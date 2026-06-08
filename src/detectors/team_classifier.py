@@ -51,13 +51,26 @@ class TeamClassifier:
             return "Unknown", self.box_colors["Unknown"]
 
         h, w = player_crop.shape[:2]
-        # Use config ratios for shirt crop
-        shirt_crop = player_crop[
-            int(h*SHIRT_CROP_HEIGHT_RATIO[0]):int(h*SHIRT_CROP_HEIGHT_RATIO[1]), 
-            int(w*SHIRT_CROP_WIDTH_RATIO[0]):int(w*SHIRT_CROP_WIDTH_RATIO[1])
-        ]
-        
-        if shirt_crop.size == 0: shirt_crop = player_crop
+        aspect_ratio = h / w if w > 0 else 0
+
+        # Adaptive crop ratios based on aspect ratio (top-down vs. vertical view)
+        if aspect_ratio < 1.35:
+            # Top-down perspective (birds-eye view): player looks wider and shorter.
+            # Head is at the top/middle. We crop wider horizontally and lower vertically to capture shoulders/chest.
+            crop_y_start = int(h * 0.25)
+            crop_y_end   = int(h * 0.85)
+            crop_x_start = int(w * 0.15)
+            crop_x_end   = int(w * 0.85)
+        else:
+            # Normal perspective: player is tall and narrow.
+            crop_y_start = int(h * SHIRT_CROP_HEIGHT_RATIO[0])
+            crop_y_end   = int(h * SHIRT_CROP_HEIGHT_RATIO[1])
+            crop_x_start = int(w * SHIRT_CROP_WIDTH_RATIO[0])
+            crop_x_end   = int(w * SHIRT_CROP_WIDTH_RATIO[1])
+
+        shirt_crop = player_crop[crop_y_start:crop_y_end, crop_x_start:crop_x_end]
+        if shirt_crop.size == 0: 
+            shirt_crop = player_crop
 
         hsv_crop = cv2.cvtColor(shirt_crop, cv2.COLOR_BGR2HSV)
         total_pixels = hsv_crop.shape[0] * hsv_crop.shape[1]
@@ -65,22 +78,40 @@ class TeamClassifier:
             return "Unknown", self.box_colors["Unknown"]
 
         # Calculate pixel RATIO for each team (normalised by crop size)
-        # Using ratio makes classification stable regardless of player size in frame
-        def _pixel_ratio(ranges):
+        def _pixel_ratio(ranges, target_hsv):
             count = 0
             for lower, upper in ranges:
-                mask = cv2.inRange(hsv_crop, lower, upper)
+                mask = cv2.inRange(target_hsv, lower, upper)
                 count += cv2.countNonZero(mask)
-            return count / total_pixels  # 0.0 – 1.0
+            return count / (target_hsv.shape[0] * target_hsv.shape[1])  # 0.0 – 1.0
 
-        team_1_ratio   = _pixel_ratio(self.team_1_ranges)
-        team_2_ratio   = _pixel_ratio(self.team_2_ranges)
-        referee_ratio  = _pixel_ratio(self.referee_ranges)
+        team_1_ratio   = _pixel_ratio(self.team_1_ranges, hsv_crop)
+        team_2_ratio   = _pixel_ratio(self.team_2_ranges, hsv_crop)
+        referee_ratio  = _pixel_ratio(self.referee_ranges, hsv_crop)
 
         max_ratio = max(team_1_ratio, team_2_ratio, referee_ratio)
 
-        # Require at least 5% matching pixels AND more than TEAM_PIXEL_THRESHOLD raw pixels
+        # Require at least 5% matching pixels
         MIN_RATIO = 0.05
+
+        # ── Secondary Fallback Crop if primary crop has low confidence ──
+        if max_ratio < MIN_RATIO:
+            # Crop the middle 60% of the player's full bbox
+            fallback_crop = player_crop[int(h * 0.2):int(h * 0.8), int(w * 0.2):int(w * 0.8)]
+            if fallback_crop.size > 0:
+                fallback_hsv = cv2.cvtColor(fallback_crop, cv2.COLOR_BGR2HSV)
+                fb_total = fallback_hsv.shape[0] * fallback_hsv.shape[1]
+                if fb_total > 0:
+                    fb_t1  = _pixel_ratio(self.team_1_ranges, fallback_hsv)
+                    fb_t2  = _pixel_ratio(self.team_2_ranges, fallback_hsv)
+                    fb_ref = _pixel_ratio(self.referee_ranges, fallback_hsv)
+                    fb_max = max(fb_t1, fb_t2, fb_ref)
+                    if fb_max >= MIN_RATIO:
+                        max_ratio = fb_max
+                        team_1_ratio = fb_t1
+                        team_2_ratio = fb_t2
+                        referee_ratio = fb_ref
+
         if max_ratio < MIN_RATIO:
             return "Unknown", self.box_colors["Unknown"]
 
