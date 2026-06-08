@@ -91,9 +91,9 @@ TEAM_2_HSV = [
     {"lower": [65,  40,  100], "upper": [95,  255, 255]}  # Teal / Mint Green
 ]
 
-# Referee (Black) - Black shirt and pants
+# Referee (Yellow) - Yellow shirt
 REFEREE_HSV = [
-    {"lower": [0,   0,   0],   "upper": [180, 60,  60]}   # Black
+    {"lower": [18,  100, 100],  "upper": [35,  255, 255]}   # Yellow
 ]
 
 # Team Names
@@ -104,7 +104,7 @@ TEAM_2_NAME = "Teal Team"
 TEAM_1_DISPLAY_COLOR = (40, 40, 220)       # Red BGR
 TEAM_2_DISPLAY_COLOR = (180, 250, 100)     # Mint Green / Teal BGR
 
-REFEREE_DISPLAY_COLOR = (30, 30, 30)       # Near-Black BGR
+REFEREE_DISPLAY_COLOR = (0, 235, 235)       # Bright Yellow BGR
 
 # ─────────────────────────────────────────────────────────
 # 9. Visualization Settings
