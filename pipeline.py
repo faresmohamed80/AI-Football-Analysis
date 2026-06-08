@@ -230,6 +230,21 @@ def main():
     prev_closest_player_id = None
     prev_ball_pos = None
 
+    # Banner state: AI model action (left)
+    banner_model_action  = None
+    banner_model_conf    = 0.0
+    banner_model_frames  = 0
+    banner_model_player  = ""
+    banner_model_color   = None
+
+    # Banner state: Physics / rule-based action (right)
+    banner_phys_action  = None
+    banner_phys_conf    = 0.0
+    banner_phys_frames  = 0
+    banner_phys_player  = ""
+    banner_phys_color   = None
+    _last_alert_text    = None
+
     # 5. Main loop for processing frame by frame
     while True:
         ret, frame = cap.read()
@@ -246,6 +261,8 @@ def main():
         frame_count += 1
         if frame_count % 30 == 0:
             print(f"⏳ Processing frame {current_frame} ({frame_count}/{total_frames_to_process})...")
+
+        action_res = None
 
         # ---------------------------------------------------------
         # تحديث إزاحة الكاميرا (Pan) عبر المعالم السيمانتيكية (Segmentation)
@@ -409,7 +426,56 @@ def main():
                     )
 
         # ---------------------------------------------------------
-        # د. الرسم على الفريم (Visualization) 🎨
+        # د. تحديث حالة البانرات 🔔
+        # ---------------------------------------------------------
+        # Count down banner timers each frame
+        if banner_model_frames > 0:
+            banner_model_frames -= 1
+        if banner_phys_frames > 0:
+            banner_phys_frames -= 1
+
+        # ── Update MODEL banner on new AI inference ────────────────────
+        if action_res and action_res[0] != 'No Action':
+            closest_p_banner = next(
+                (p for p in players_data if p.get('track_id') == closest_player_id), None
+            )
+            if closest_p_banner:
+                banner_model_action = action_res[0]
+                banner_model_conf   = action_res[1]
+                banner_model_frames = 90
+                banner_model_player = closest_p_banner.get('name') or f"Player #{closest_player_id}"
+                banner_model_color  = closest_p_banner.get('color')
+
+        # ── Update PHYSICS banner on new stat_tracker alert ────────────
+        _alert_map = {
+            'NICE PASS!':          'PASS',
+            'LONG PASS!':          'HIGH_PASS',
+            'BEAUTIFUL CROSS!':    'CROSS',
+            'WHAT A SHOT!':        'SHOT',
+            'SHOT BLOCKED/SAVED!': 'SHOT',
+            'INTERCEPTION!':       'INTERCEPTION',
+        }
+        _has_new_alert = False
+        if stats_tracker.current_alert:
+            if stats_tracker.current_alert != _last_alert_text:
+                _has_new_alert = True
+            elif stats_tracker.alert_frames in (60, 50, 45):
+                _has_new_alert = True
+
+        if _has_new_alert:
+            _phys_action = _alert_map.get(stats_tracker.current_alert)
+            if _phys_action:
+                _poss_tid = stats_tracker.last_possessor_tid
+                _poss_p   = next((p for p in players_data if p.get('track_id') == _poss_tid), None)
+                banner_phys_action = _phys_action
+                banner_phys_conf   = 0.90
+                banner_phys_frames = 90
+                banner_phys_player = stats_tracker.last_possessor_name or ""
+                banner_phys_color  = _poss_p.get('color') if _poss_p else None
+        _last_alert_text = stats_tracker.current_alert
+
+        # ---------------------------------------------------------
+        # ه. الرسم على الفريم (Visualization) 🎨
         # ---------------------------------------------------------
         # 1. Draw player/ball annotations + closest player arrow
         annotated_frame = Visualizer.draw_annotations(
@@ -434,7 +500,18 @@ def main():
                 team_1_name=team_1_name, team_2_name=team_2_name
             )
 
-        # 5. حفظ الفريم
+        # 5. رسم إشعارات الأكشن (AI Model يسار / Physics يمين)
+        annotated_frame = Visualizer.draw_action_banners(
+            annotated_frame,
+            model_action=banner_model_action,   model_conf=banner_model_conf,
+            model_frames=banner_model_frames,   model_player=banner_model_player,
+            model_team_color=banner_model_color,
+            physics_action=banner_phys_action,  physics_conf=banner_phys_conf,
+            physics_frames=banner_phys_frames,  physics_player=banner_phys_player,
+            physics_team_color=banner_phys_color,
+        )
+
+        # 6. حفظ الفريم
         out.write(annotated_frame)
 
     # 6. إغلاق وتحرير الملفات

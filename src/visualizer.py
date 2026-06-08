@@ -168,6 +168,156 @@ class Visualizer:
         return frame
 
     # ------------------------------------------------------------------
+    # Action Banners (left = AI model, right = physics)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def draw_action_banners(frame,
+                            model_action=None,   model_conf=0.0,   model_frames=0,   model_player="",  model_team_color=None,
+                            physics_action=None, physics_conf=0.0, physics_frames=0, physics_player="", physics_team_color=None):
+        """
+        Draw two sliding toast banners:
+          - Left side  → AI Model action
+          - Right side → Physics / Rule-based action
+
+        Each banner only appears when frames > 0.
+        """
+        fh, fw = frame.shape[:2]
+
+        # ── Emoji / icon map ──────────────────────────────────────────
+        ACTION_ICON = {
+            'PASS':                    'PASS',
+            'HIGH_PASS':               'HIGH PASS',
+            'CROSS':                   'CROSS',
+            'SHOT':                    'SHOT',
+            'CLEARANCE':               'CLEARANCE',
+            'HEADER':                  'HEADER',
+            'THROW_IN':                'THROW IN',
+            'PLAYER_SUCCESSFUL_TACKLE':'TACKLE',
+            'BALL_PLAYER_BLOCK':       'BLOCK',
+            'INTERCEPTION':            'INTERCEPTION',
+            'No Action':               'NO ACTION',
+        }
+
+        # ── Color per action type ─────────────────────────────────────
+        ACTION_COLOR = {
+            'PASS':                    (60, 220, 60),
+            'HIGH_PASS':               (180, 255, 60),
+            'CROSS':                   (255, 180, 40),
+            'SHOT':                    (0,  80, 255),
+            'CLEARANCE':               (0, 180, 255),
+            'HEADER':                  (200, 80, 255),
+            'THROW_IN':                (255, 220, 0),
+            'PLAYER_SUCCESSFUL_TACKLE': (0, 200, 120),
+            'BALL_PLAYER_BLOCK':       (255, 140, 0),
+            'INTERCEPTION':            (0, 120, 255),
+            'No Action':               (100, 100, 100),
+        }
+
+        def _accent(action):
+            c = ACTION_COLOR.get(action, (0, 215, 255))
+            return c if isinstance(c, tuple) else (0, 215, 255)
+
+        def _draw_banner(frame, action, conf, frames_left, player, team_color, side):
+            """Draw one banner. side='left' or 'right'."""
+            if frames_left <= 0 or not action or action == 'No Action':
+                return frame
+
+            # Fade alpha: full for first half of life, fades in last 15 frames
+            max_frames  = 90
+            alpha       = min(1.0, frames_left / 15.0)
+
+            # Banner geometry
+            BW, BH  = 300, 80
+            margin  = 12
+            BY      = fh // 2 - BH // 2   # vertically centred
+
+            if side == 'left':
+                BX = margin
+            else:
+                BX = fw - BW - margin
+
+            # Slide-in animation: start off-screen, slide to final position
+            slide_frames = 12
+            progress     = min(1.0, (max_frames - frames_left + 1) / slide_frames)
+            if side == 'left':
+                BX_draw = int(BX - BW + BX * progress + BW * progress)
+                BX_draw = max(margin, min(BX, BX_draw))
+            else:
+                start_x  = fw
+                BX_draw  = int(start_x - (start_x - BX) * progress)
+                BX_draw  = max(BX, min(fw - margin, BX_draw))
+
+            # Clamp drawing region to frame
+            x1 = max(0, BX_draw)
+            y1 = max(0, BY)
+            x2 = min(fw, BX_draw + BW)
+            y2 = min(fh, BY + BH)
+            if x2 <= x1 or y2 <= y1:
+                return frame
+
+            accent = _accent(action)
+            label  = ACTION_ICON.get(action, action)
+
+            # Translucent dark background
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), (15, 15, 15), -1)
+            cv2.addWeighted(overlay, alpha * 0.80, frame, 1 - alpha * 0.80, 0, frame)
+
+            # Accent side stripe (4px)
+            stripe_x = x1 if side == 'left' else x2 - 4
+            cv2.rectangle(frame, (stripe_x, y1), (stripe_x + 4, y2), accent, -1)
+
+            # Source label  (small, top)
+            source_lbl = "AI MODEL" if side == 'left' else "PHYSICS"
+            src_color  = (120, 220, 255) if side == 'left' else (255, 200, 80)
+            tx = x1 + 14 if side == 'left' else x1 + 10
+            cv2.putText(frame, source_lbl,
+                        (tx, y1 + 16),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.35, src_color, 1, cv2.LINE_AA)
+
+            # Action label (large, bold)
+            cv2.putText(frame, label,
+                        (tx, y1 + 40),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.75, accent, 2, cv2.LINE_AA)
+
+            # Player name (small, below action)
+            if player:
+                pname = player[:22] + '..' if len(player) > 22 else player
+                cv2.putText(frame, pname,
+                            (tx, y1 + 58),
+                            cv2.FONT_HERSHEY_DUPLEX, 0.32, (200, 200, 200), 1, cv2.LINE_AA)
+
+            # Confidence bar
+            bar_y   = y2 - 6
+            bar_x1  = x1 + 10
+            bar_x2  = x2 - 10
+            bar_len = int((bar_x2 - bar_x1) * min(1.0, conf))
+            cv2.rectangle(frame, (bar_x1, bar_y), (bar_x2, bar_y + 3), (50, 50, 50), -1)
+            if bar_len > 0:
+                cv2.rectangle(frame, (bar_x1, bar_y), (bar_x1 + bar_len, bar_y + 3), accent, -1)
+
+            # Team colour dot (top-right corner of banner)
+            if team_color is not None:
+                dot_x = x2 - 14 if side == 'left' else x2 - 14
+                cv2.circle(frame, (dot_x, y1 + 14), 6, team_color, -1)
+                cv2.circle(frame, (dot_x, y1 + 14), 6, (255,255,255), 1)
+
+            return frame
+
+        # Draw left banner (AI model)
+        frame = _draw_banner(frame,
+                             model_action, model_conf, model_frames,
+                             model_player, model_team_color, 'left')
+
+        # Draw right banner (physics)
+        frame = _draw_banner(frame,
+                             physics_action, physics_conf, physics_frames,
+                             physics_player, physics_team_color, 'right')
+
+        return frame
+
+    # ------------------------------------------------------------------
     # Speed / distance overlay
     # ------------------------------------------------------------------
 
