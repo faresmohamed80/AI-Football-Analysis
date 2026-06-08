@@ -43,12 +43,14 @@ class Visualizer:
     @staticmethod
     def draw_annotations(frame, players_data, ball_data=None,
                          possessor_id: int | None = None,
-                         ball_trail: deque | None = None):
+                         ball_trail: deque | None = None,
+                         closest_player_id: int | None = None):
         """
         Draw:
         - supervision EllipseAnnotator for every detected player
         - dark-background label above each player (always readable)
         - gold triangle above the ball possessor
+        - green arrow above the player closest to the ball
         - ball trail (fading colored line)
         - ball marker
         """
@@ -136,6 +138,17 @@ class Visualizer:
                         color_lookup=sv.ColorLookup.INDEX,
                     )
                     frame = tri_ann.annotate(scene=frame, detections=poss_det)
+
+            # ── 3b. Downward Arrow above player closest to the ball ──
+            if closest_player_id is not None:
+                closest_p = next((p for p in players_data if p.get('track_id') == closest_player_id), None)
+                if closest_p:
+                    x1, y1, x2, y2 = map(int, closest_p['bbox'])
+                    cx = (x1 + x2) // 2
+                    cy = y1 - 8
+                    # Draw a neat downward green arrow pointing to the player's head (with black outline)
+                    cv2.arrowedLine(frame, (cx, cy - 25), (cx, cy), (0, 0, 0), 4, tipLength=0.35, line_type=cv2.LINE_AA)
+                    cv2.arrowedLine(frame, (cx, cy - 25), (cx, cy), (50, 255, 50), 2, tipLength=0.35, line_type=cv2.LINE_AA)
 
         # ── 4. Ball trail ───────────────────────────────────────────────
         # Disabled as per user request to remove trail/path prediction.

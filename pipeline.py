@@ -62,7 +62,6 @@ def main():
                      "secondary_tshirt_colors": None,
                      "goalkeeper_tshirt_colors": None}
         away_team = {"team_name": TEAM_2_NAME,
-                     "primary_tshirt_colors": None,
                      "secondary_tshirt_colors": None,
                      "goalkeeper_tshirt_colors": None}
         player_db = {}
@@ -167,7 +166,8 @@ def main():
     ret, first_frame = cap.read()
     if not ret: return
     h, w = first_frame.shape[:2]
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # نرجع الفيديو للأول تاني
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)                     "primary_tshirt_colors": None,
+ # نرجع الفيديو للأول تاني
 
     # تهيئة رادار الملعب
     radar_seg = PitchRadar(frame_w=w, frame_h=h, radar_w=280, radar_h=168)
@@ -207,6 +207,7 @@ def main():
 
     track_id_to_name = {}
     track_id_to_team = {}   # track_id → team name (for aggregating team stats)
+    prev_closest_player_id = None
 
     # 5. Main loop for processing frame by frame
     while True:
@@ -228,12 +229,13 @@ def main():
         # ---------------------------------------------------------
         # تحديث إزاحة الكاميرا (Pan) عبر المعالم السيمانتيكية (Segmentation)
         # ---------------------------------------------------------
-        try:
-            seg_results = pitch_segmenter(frame, conf=STADIUM_CONFIDENCE, verbose=False)
-            dx, dy = semantic_mapper.get_camera_offset(seg_results, w, h, radar_seg.matrix)
-            radar_seg.update_matrix(dx, dy)
-        except Exception as e:
-            print(f"⚠️ Semantic offset calculation error: {e}")
+        if use_radar and pitch_segmenter is not None:
+            try:
+                seg_results = pitch_segmenter(frame, conf=STADIUM_CONFIDENCE, verbose=False)
+                dx, dy = semantic_mapper.get_camera_offset(seg_results, w, h, radar_seg.matrix)
+                radar_seg.update_matrix(dx, dy)
+            except Exception as e:
+                print(f"⚠️ Semantic offset calculation error: {e}")
 
         # ---------------------------------------------------------
         # أ. معالجة اللاعبين (الأساس)
@@ -251,17 +253,12 @@ def main():
                 raw_team, raw_color = team_classifier.get_player_team(frame, bbox)
                 team_name, box_color = team_voter.update(track_id, raw_team, raw_color)
             
-            # قراءة وتثبيت الرقم
-            if track_id in voter.final_numbers:
-                number = voter.final_numbers[track_id]
-            else:
-                predicted_number = number_recognizer.recognize(frame, bbox)
-                number = voter.update(track_id, predicted_number)
+            # قراءة وتحديث تصويت الرقم المستمر
+            predicted_number = number_recognizer.recognize(frame, bbox)
+            number = voter.update(track_id, predicted_number)
             
             # ربط الرقم باسم اللاعب من الداتابيز
-            if number == "Loading...":
-                player_display_name = "Identifying..."
-            elif number is None or number == "":
+            if number is None or number == "":
                 player_display_name = "Unknown"
             else:
                 player_display_name = player_db.get(str(number), f"Player #{number}")
@@ -284,14 +281,31 @@ def main():
         # ---------------------------------------------------------
         ball_data = ball_tracker.track(frame, players_data)
 
-        # Update ball trail with current real position (skip interpolated)
+        # Update ball trail + find closest player to ball
+        ball_cx, ball_cy = None, None
+        closest_player_id = None
         if ball_data is not None:
-            bbox, is_interpolated = ball_data
-            if bbox is not None and not is_interpolated:
-                bx1, by1, bx2, by2 = bbox
+            bbox_ball, is_interpolated = ball_data
+            if bbox_ball is not None and not is_interpolated:
+                bx1, by1, bx2, by2 = bbox_ball
                 ball_cx = (bx1 + bx2) // 2
                 ball_cy = (by1 + by2) // 2
                 ball_trail.append((ball_cx, ball_cy))
+
+        # ── Compute player closest to ball (any team, any role) ───────
+        if ball_cx is not None and players_data:
+            min_dist = float('inf')
+            for p in players_data:
+                px1, py1, px2, py2 = p['bbox']
+                feet_x = (px1 + px2) / 2
+                feet_y = py2
+                dist = ((feet_x - ball_cx) ** 2 + (feet_y - ball_cy) ** 2) ** 0.5
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_player_id = p['track_id']
+        else:
+            closest_player_id = prev_closest_player_id  # keep last known
+        prev_closest_player_id = closest_player_id
 
         # ---------------------------------------------------------
         # ج. حساب الإحصائيات (الاستحواذ + السرعة + الهيت ماب) 📊
@@ -300,26 +314,27 @@ def main():
         stats_tracker.update(players_data, ball_data, radar_seg.matrix, radar_seg.dx, radar_seg.dy)
         new_possessor_tid = stats_tracker.possessor_tid
 
-        # Clear action buffer for the player who JUST LOST possession
-        if prev_possessor_tid is not None and prev_possessor_tid != new_possessor_tid:
-            action_recognizer.clear_player(prev_possessor_tid)
+        # Clear action buffer for the player who JUST LOST the closest-to-ball role
+        if prev_closest_player_id is not None and prev_closest_player_id != closest_player_id:
+            action_recognizer.clear_player(prev_closest_player_id)
 
-        # Run deep learning action recognition on the active ball possessor
-        if new_possessor_tid is not None:
-            active_p = next((p for p in players_data if p['track_id'] == new_possessor_tid), None)
-            if active_p:
+        # Run deep learning action recognition on the player CLOSEST TO THE BALL
+        # (crops the closest player's bbox for tighter, more accurate action context)
+        if closest_player_id is not None:
+            closest_p = next((p for p in players_data if p['track_id'] == closest_player_id), None)
+            if closest_p:
                 # update() returns a result ONLY when a new 32-frame inference completes
-                action_res = action_recognizer.update(new_possessor_tid, frame, active_p['bbox'])
+                action_res = action_recognizer.update(closest_player_id, frame, closest_p['bbox'])
                 if action_res:
                     # New inference completed → count it once
                     action_label, confidence = action_res
-                    model_player_actions[new_possessor_tid][action_label] += 1
-                    t_name = active_p['team']
+                    model_player_actions[closest_player_id][action_label] += 1
+                    t_name = closest_p['team']
                     if t_name not in ('Referee', 'Unknown'):
                         model_team_actions[t_name][action_label] += 1
 
                 # Use get_last_action() for HUD display (doesn't affect counting)
-                last_action = action_recognizer.get_last_action(new_possessor_tid)
+                last_action = action_recognizer.get_last_action(closest_player_id)
                 if last_action:
                     stats_tracker.current_action      = last_action[0]
                     stats_tracker.current_action_conf = last_action[1]
@@ -355,11 +370,12 @@ def main():
         # ---------------------------------------------------------
         # د. الرسم على الفريم (Visualization) 🎨
         # ---------------------------------------------------------
-        # 1. Draw player/ball annotations (supervision)
+        # 1. Draw player/ball annotations + closest player arrow
         annotated_frame = Visualizer.draw_annotations(
             frame, players_data, ball_data,
             possessor_id=stats_tracker.possessor_tid,
-            ball_trail=ball_trail
+            ball_trail=ball_trail,
+            closest_player_id=closest_player_id
         )
 
         # 2. رسم السرعة / المسافة فوق كل لاعب
@@ -368,13 +384,14 @@ def main():
         # 3. رسم لوحة الإحصائيات الشفافة
         annotated_frame = stats_tracker.draw_stats(annotated_frame)
 
-        # 4. رسم الرادار
-        annotated_frame = radar_seg.draw_radar(
-            annotated_frame, players_data, ball_data,
-            position="bottom-left", title="Pitch Radar",
-            team_1_color=team_1_bgr, team_2_color=team_2_bgr,
-            team_1_name=team_1_name, team_2_name=team_2_name
-        )
+        # 4. رسم الرادار (مشروط بخيار المستخدم)
+        if use_radar:
+            annotated_frame = radar_seg.draw_radar(
+                annotated_frame, players_data, ball_data,
+                position="bottom-left", title="Pitch Radar",
+                team_1_color=team_1_bgr, team_2_color=team_2_bgr,
+                team_1_name=team_1_name, team_2_name=team_2_name
+            )
 
         # 5. حفظ الفريم
         out.write(annotated_frame)
@@ -575,4 +592,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
+

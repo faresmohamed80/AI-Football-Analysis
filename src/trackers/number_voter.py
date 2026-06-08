@@ -1,49 +1,33 @@
 from collections import Counter
 
 class NumberVotingSystem:
-    def __init__(self, required_frames=30):
+    def __init__(self, required_frames=None):
         """
-        نظام لتجميع قراءات الأرقام واختيار الأكثر تكراراً
-        required_frames: عدد الفريمات (أو القراءات) المطلوبة لأخذ قرار نهائي
+        نظام تصويت ديناميكي مستمر يعتمد على القيمة الأكثر تكراراً (Mode) عبر الفيديو بالكامل.
         """
         self.required_frames = required_frames
-        
-        # قاموس (Dictionary) لتخزين كل القراءات لكل لاعب
-        # الشكل: {track_id: ["10", "10", "7", "10"]}
-        self.history = {} 
-        
-        # قاموس لتخزين الرقم النهائي بعد ما ينجح في التصويت
-        # الشكل: {track_id: "10"}
-        self.final_numbers = {} 
+        self.history = {}  # track_id -> قائمة بجميع القراءات المرصودة
+
+    @property
+    def final_numbers(self):
+        """إرجاع الرقم الأكثر تكراراً لكل لاعب بشكل ديناميكي للتوافق."""
+        res = {}
+        for tid, votes in self.history.items():
+            if votes:
+                most_common = Counter(votes).most_common(1)[0][0]
+                if most_common:
+                    res[tid] = most_common
+        return res
 
     def update(self, track_id, predicted_number):
-        """
-        يستقبل الـ ID المؤقت بتاع اللاعب من الـ Tracker، والرقم اللي الموديل قرأه في الفريم ده
-        """
-        # 1. لو اللاعب ده إحنا أصلاً ثبتنا رقمه قبل كده، رجع الرقم النهائي فوراً
-        if track_id in self.final_numbers:
-            return self.final_numbers[track_id]
-
-        # 2. لو الرقم لسه ماتثبتش، نبدأ نخزن القراءات
+        """يستقبل القراءة الجديدة ويحدث التصويت، ثم يرجع الرقم الفائز حتى الآن."""
         if track_id not in self.history:
             self.history[track_id] = []
-        
-        # لو الموديل قرأ رقم فعلاً (مش None)، ضيفه للتاريخ بتاع اللاعب
+            
         if predicted_number is not None and predicted_number != "":
             self.history[track_id].append(predicted_number)
-
-        # 3. هل جمعنا قراءات كفاية (مثلاً 30 قراءة)؟
-        if len(self.history[track_id]) >= self.required_frames:
-            # احسب الرقم الأكثر تكراراً (Voting)
-            most_common = Counter(self.history[track_id]).most_common(1)[0][0]
             
-            # احفظه كرقم نهائي للاعب ده عشان مانحسبوش تاني
-            self.final_numbers[track_id] = most_common
+        if self.history[track_id]:
+            return Counter(self.history[track_id]).most_common(1)[0][0]
             
-            # ممكن تفضي الـ history بتاع اللاعب ده عشان توفر مساحة في الرامات
-            del self.history[track_id] 
-            
-            return most_common
-
-        # لو لسه مكملناش الـ 30 قراءة، هنرجع None أو نكتب "جاري التعرف..."
-        return "Loading..."
+        return ""
