@@ -82,7 +82,16 @@ class TeamClassifier:
             for lower, upper in ranges:
                 mask = cv2.bitwise_or(mask, cv2.inRange(target_hsv, lower, upper))
             
-            if exclude_green:
+            # If the team's range overlaps with the grass green Hue range [35, 90],
+            # we do not exclude green as that would erase the player's shirt pixels.
+            is_team_green = False
+            for lower, upper in ranges:
+                if len(lower) > 0 and len(upper) > 0:
+                    if (lower[0] <= 90 and upper[0] >= 35):
+                        is_team_green = True
+                        break
+
+            if exclude_green and not is_team_green:
                 # Mask out grass green (Hue 35 to 90, Saturation > 35, Value > 35)
                 lower_green = np.array([35, 35, 35])
                 upper_green = np.array([90, 255, 255])

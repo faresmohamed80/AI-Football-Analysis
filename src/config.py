@@ -80,36 +80,31 @@ SHIRT_CROP_WIDTH_RATIO = (0.25, 0.75)  # Left/Right ratio for shirt crop (tighte
 # ─────────────────────────────────────────────────────────
 # 8. Team Color Ranges (HSV)
 # ─────────────────────────────────────────────────────────
-# Team 1 (Black) - Tightened to avoid dark shadows and dark green pitch
-# Exclude very dark greens by capping Hue away from green (35-85)
+# Team 1 (Red) - Bright red shirts
 TEAM_1_HSV = [
-    {"lower": [0,   0,   0],   "upper": [15,  255, 55]},  # Dark reds/browns (black)
-    {"lower": [160, 0,   0],   "upper": [180, 255, 55]},  # Dark reds wrap-around
-    {"lower": [86, 0,   0],   "upper": [159, 255, 55]},  # Dark blues/purples (black)
-    {"lower": [0,   0,   0],   "upper": [34,  60,  55]},  # Neutral low-sat darks
-    {"lower": [0,   0,   0],   "upper": [180, 30,  50]},  # Very low saturation darks
+    {"lower": [0,   70,  70],  "upper": [10,  255, 255]},  # Bright reds lower
+    {"lower": [170, 70,  70],  "upper": [180, 255, 255]},  # Bright reds upper
 ]
 
-# Team 2 (White) - Tightened to avoid bright pitch highlights
+# Team 2 (Teal/Mint Green) - Mint green/teal shirts
 TEAM_2_HSV = [
-    {"lower": [0,   0,  185],  "upper": [180, 45, 255]},  # Pure whites (very low saturation)
+    {"lower": [65,  40,  100], "upper": [95,  255, 255]}  # Teal / Mint Green
 ]
 
-# Referee (Green) - Expanded slightly for different shades
+# Referee (Black) - Black shirt and pants
 REFEREE_HSV = [
-    {"lower": [35, 50, 50],   "upper": [85, 255, 220]}  # Green (exclude very bright = pitch lines)
+    {"lower": [0,   0,   0],   "upper": [180, 60,  60]}   # Black
 ]
 
 # Team Names
-TEAM_1_NAME = "Black Team"
-TEAM_2_NAME = "White Team"
+TEAM_1_NAME = "Red Team"
+TEAM_2_NAME = "Teal Team"
 
 # Team Display Colors (BGR)
-# Note: Pure black (0,0,0) is invisible on dark backgrounds → use dark charcoal
-TEAM_1_DISPLAY_COLOR = (40, 40, 40)       # Near-Black BGR (visible on radar/ellipse)
-TEAM_2_DISPLAY_COLOR = (255, 255, 255)    # White BGR
+TEAM_1_DISPLAY_COLOR = (40, 40, 220)       # Red BGR
+TEAM_2_DISPLAY_COLOR = (180, 250, 100)     # Mint Green / Teal BGR
 
-REFEREE_DISPLAY_COLOR = (0, 200, 50)      # Bright Green BGR
+REFEREE_DISPLAY_COLOR = (30, 30, 30)       # Near-Black BGR
 
 # ─────────────────────────────────────────────────────────
 # 9. Visualization Settings
